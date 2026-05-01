@@ -8,6 +8,7 @@ type HelpModalProps = {
 type Section =
   | 'overview'
   | 'importing'
+  | 'sprites'
   | 'inspector'
   | 'hierarchy'
   | 'placeholders'
@@ -21,15 +22,16 @@ type Section =
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'overview',     label: '① Overview' },
   { id: 'importing',    label: '② Importing assets' },
-  { id: 'inspector',    label: '③ Inspector panel' },
-  { id: 'hierarchy',    label: '④ Hierarchy panel' },
-  { id: 'placeholders', label: '⑤ Placeholders' },
-  { id: 'animations',   label: '⑥ Animation States' },
-  { id: 'viewport',     label: '⑦ Viewport & canvas' },
-  { id: 'project',      label: '⑧ Save & Open project' },
-  { id: 'validation',   label: '⑨ Validation panel' },
-  { id: 'shortcuts',    label: '⑩ Keyboard shortcuts' },
-  { id: 'browser',      label: '⑪ Browser support' },
+  { id: 'sprites',      label: '③ Static sprites (IMG)' },
+  { id: 'inspector',    label: '④ Inspector panel' },
+  { id: 'hierarchy',    label: '⑤ Hierarchy panel' },
+  { id: 'placeholders', label: '⑥ Placeholders' },
+  { id: 'animations',   label: '⑦ Animation States' },
+  { id: 'viewport',     label: '⑧ Viewport & canvas' },
+  { id: 'project',      label: '⑨ Save & Open project' },
+  { id: 'validation',   label: '⑩ Validation panel' },
+  { id: 'shortcuts',    label: '⑪ Keyboard shortcuts' },
+  { id: 'browser',      label: '⑫ Browser support' },
 ]
 
 export function HelpModal({ open, onClose }: HelpModalProps) {
@@ -95,7 +97,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <p className="help-p">
                   Mancala Gaming Studio Editor is an <strong>internal tool developed exclusively for use within
                   Mancala Gaming Studios</strong>. It is intended for game designers to compose, inspect, and position
-                  Spine 2D skeletal animations in a shared scene. The output — a <code>.mancala</code> project file —
+                  Spine 2D skeletal animations and static image sprites in a shared scene. The output — a <code>.mancala</code> project file —
                   can be handed directly to developers who read the saved positions, animations, skins, and asset
                   references to replicate the layout in-game.
                 </p>
@@ -106,15 +108,18 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Typical workflow</h3>
                 <ol className="help-ol">
                   <li>
-                    <strong>Import</strong> one or more Spine exports via <em>Project → Import…</em> or drag &amp; drop onto the canvas.
+                    <strong>Import Spine exports</strong> via <em>Project → Import…</em> or drag &amp; drop onto the canvas.
                     Each skeleton needs its <code>.skel</code> (or <code>.json</code>), <code>.atlas</code>, and all texture <code>.png</code> files.
+                  </li>
+                  <li>
+                    <strong>Drop static images</strong> (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.gif</code>) directly onto the canvas to add them as background or overlay sprites — no atlas required.
                   </li>
                   <li>
                     <strong>Position</strong> each object on the canvas by dragging it, or by typing exact coordinates in the
                     Inspector's <em>World Position</em> fields.
                   </li>
                   <li>
-                    <strong>Adjust</strong> the animation, skin, scale, loop, and speed for each object in the <em>Inspector</em> panel.
+                    <strong>Adjust</strong> the animation, skin, scale, loop, and speed for Spine objects; or scale, rotation, and opacity for sprites — all in the <em>Inspector</em> panel.
                   </li>
                   <li>
                     <strong>Attach</strong> child skeletons to named placeholder bones of a parent skeleton for hierarchical scenes.
@@ -124,6 +129,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   </li>
                   <li>
                     <strong>Save</strong> the project as a <code>.mancala</code> file via <em>Project → Save</em> or <kbd>⌘S</kbd>.
+                    All Spine assets and sprite images are embedded in the file.
                   </li>
                 </ol>
 
@@ -131,9 +137,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <table className="help-table">
                   <tbody>
                     <tr><td><strong>Title bar</strong></td><td>Project menu, Settings menu, Help button, Undo/Redo, atlas resolution toggle, scene controls.</td></tr>
-                    <tr><td><strong>Hierarchy panel</strong> (left)</td><td>Lists all loaded skeletons; controls visibility, lock, and layer order.</td></tr>
+                    <tr><td><strong>Hierarchy panel</strong> (left)</td><td>Lists all scene objects with colour-coded type badges (<span className="help-badge-inline help-badge-inline--spine">SKL</span> Spine, <span className="help-badge-inline help-badge-inline--sprite">IMG</span> Image); controls visibility, lock, and layer order.</td></tr>
                     <tr><td><strong>Canvas</strong> (centre)</td><td>The live PixiJS renderer — drag objects, zoom, pan, view the world grid.</td></tr>
-                    <tr><td><strong>Inspector panel</strong> (right)</td><td>Per-object settings: position, animation, skin, scale, placeholder bindings, slots.</td></tr>
+                    <tr><td><strong>Inspector panel</strong> (right)</td><td>Per-object settings: position, animation/skin/scale for Spine; position/scale/rotation/opacity for sprites.</td></tr>
                     <tr><td><strong>Validation panel</strong> (bottom)</td><td>Real-time errors and warnings for the whole scene.</td></tr>
                   </tbody>
                 </table>
@@ -174,6 +180,60 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <p className="help-p">
                   <em>Project → Clear scene</em> removes all objects. If there are unsaved changes, a confirmation dialog
                   will ask you to <strong>Save</strong> first or <strong>Discard &amp; Clear</strong>.
+                </p>
+              </>
+            )}
+
+            {active === 'sprites' && (
+              <>
+                <h3 className="help-section-title">Static sprites <span className="help-badge-inline help-badge-inline--sprite">IMG</span></h3>
+                <p className="help-p">
+                  Static sprites are plain image files (<code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>,{' '}
+                  <code>.webp</code>, <code>.gif</code>) placed directly on the canvas as background layers, overlays,
+                  or UI elements. They do not require an atlas and have no animation — but they share the same canvas,
+                  hierarchy, and layer-order system as Spine objects.
+                </p>
+
+                <h3 className="help-section-title">How to add a sprite</h3>
+                <ol className="help-ol">
+                  <li>
+                    <strong>Drop an image file</strong> directly onto the canvas (with no Spine files in the same drop).
+                    The image appears at world position (0, 0) and is selected immediately.
+                  </li>
+                  <li>
+                    Alternatively, drag the image file into the <em>Project → Drop files here</em> zone in the menu.
+                  </li>
+                </ol>
+                <p className="help-p help-note">
+                  When dropping a mix of Spine files and images at the same time, the images that belong to a Spine atlas
+                  are consumed by the Spine pipeline. Only pure image drops (no accompanying <code>.skel</code> / <code>.atlas</code>
+                  in the same batch) create sprite objects.
+                </p>
+
+                <h3 className="help-section-title">Inspector controls for sprites</h3>
+                <table className="help-table">
+                  <thead><tr><th>Control</th><th>Description</th></tr></thead>
+                  <tbody>
+                    <tr><td><strong>World Position X / Y</strong></td><td>Centre of the sprite in world pixels. Drag-to-scrub or double-click to type. Snaps to 0.5 px.</td></tr>
+                    <tr><td><strong>Scale X / Y</strong></td><td>Independent horizontal and vertical scale (1.0 = original size). Drag-to-scrub or double-click to type.</td></tr>
+                    <tr><td><strong>Rotation</strong></td><td>Rotation in degrees. Drag-to-scrub or double-click to type.</td></tr>
+                    <tr><td><strong>Opacity</strong></td><td>Transparency slider — 0% invisible, 100% fully opaque.</td></tr>
+                    <tr><td><strong>Source</strong></td><td>Shows the original filename of the image.</td></tr>
+                  </tbody>
+                </table>
+
+                <h3 className="help-section-title">Layer ordering with Spine objects</h3>
+                <p className="help-p">
+                  Sprites and Spine objects share the same Hierarchy list and can be freely interleaved.
+                  Drag rows in the Hierarchy to change the draw order — the topmost row is rendered in front.
+                  Use this to place a background sprite behind all skeletons, or an overlay sprite on top.
+                </p>
+
+                <h3 className="help-section-title">Saving &amp; opening</h3>
+                <p className="help-p">
+                  Sprite image files are embedded inside the <code>.mancala</code> project archive (in the <code>assets/</code>
+                  folder), alongside all Spine assets. Position, scale, rotation, opacity, visibility, and lock state are all
+                  restored when the project is reopened.
                 </p>
               </>
             )}
@@ -236,7 +296,8 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
               <>
                 <h3 className="help-section-title">Hierarchy panel</h3>
                 <p className="help-p">
-                  The left panel lists every loaded skeleton in scene order (top = rendered on top).
+                  The left panel lists every object in the scene in draw order (top row = rendered in front).
+                  It shows both Spine skeletons and static image sprites together.
                 </p>
                 <table className="help-table">
                   <thead><tr><th>Control</th><th>Action</th></tr></thead>
@@ -248,6 +309,38 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <tr><td>× button</td><td>Remove the object from the scene (asks for confirmation)</td></tr>
                   </tbody>
                 </table>
+
+                <h3 className="help-section-title">Object type badges</h3>
+                <p className="help-p">
+                  Each row shows a small 3-letter colour-coded badge indicating the object type.
+                  More types will be added as the editor grows.
+                </p>
+                <table className="help-table">
+                  <thead><tr><th>Badge</th><th>Type</th><th>Description</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td><span className="help-badge-inline help-badge-inline--spine">SKL</span></td>
+                      <td>Skeleton</td>
+                      <td>A Spine 2D skeletal animation object loaded from a <code>.skel</code> / <code>.json</code> file.</td>
+                    </tr>
+                    <tr>
+                      <td><span className="help-badge-inline help-badge-inline--sprite">IMG</span></td>
+                      <td>Image</td>
+                      <td>A static sprite loaded from a <code>.png</code>, <code>.jpg</code>, <code>.webp</code>, or similar image file.</td>
+                    </tr>
+                    <tr>
+                      <td><span className="help-badge-inline help-badge-inline--font">FNT</span></td>
+                      <td>Font / Text</td>
+                      <td>Reserved for future text label objects.</td>
+                    </tr>
+                    <tr>
+                      <td><span className="help-badge-inline help-badge-inline--particles">VFX</span></td>
+                      <td>Particles / VFX</td>
+                      <td>Reserved for future particle effect objects.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
                 <p className="help-p help-note">
                   Child objects attached to a placeholder are shown indented under their parent in the list.
                 </p>
@@ -365,9 +458,11 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">What is saved</h3>
                 <ul className="help-list">
                   <li>All imported skeleton, atlas, and texture files (embedded in the archive)</li>
-                  <li>World position, canvas scale, and bone offset for each object</li>
-                  <li>Selected animation, skin, loop, and speed for each object</li>
-                  <li>Layer order, visibility, and lock state</li>
+                  <li>All static sprite image files (embedded in the archive under <code>assets/</code>)</li>
+                  <li>World position, canvas scale, and bone offset for each Spine object</li>
+                  <li>World position, scale X/Y, rotation, and opacity for each sprite</li>
+                  <li>Selected animation, skin, loop, and speed for each Spine object</li>
+                  <li>Layer order (combined for both Spine and sprite objects), visibility, and lock state</li>
                   <li>Placeholder bindings (which child is attached to which bone)</li>
                   <li>Ignored placeholder policy flags</li>
                   <li>Backdrop mode and safe frame preset</li>

@@ -9,8 +9,6 @@ import {
 } from 'react'
 import type { PixiStageHandle } from './PixiStage'
 import type { SpriteRow } from './SpriteRow'
-import { snapWorldScalar } from './pixi/snapWorldPosition'
-
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -26,6 +24,10 @@ function parseCoord(raw: string): number | null {
  * Click-drag scrub for a single numeric axis.
  * Same interaction model as the Spine inspector.
  */
+function snapTo(v: number, step: number): number {
+  return Math.round(v / step) * step
+}
+
 function useAxisScrub(
   disabled: boolean,
   onBegin: () => { value: number; companion: number } | null,
@@ -33,6 +35,7 @@ function useAxisScrub(
   onEditBegin: (() => void) | undefined,
   onEditEnd: ((committed: boolean) => void) | undefined,
   sensitivity = 1,
+  snapStep = 0.5,
 ) {
   const scrubRef = useRef<{
     startX: number
@@ -73,8 +76,8 @@ function useAxisScrub(
     (e: React.PointerEvent<HTMLElement>) => {
       const s = scrubRef.current
       if (!s || e.pointerId !== s.pointerId) return
-      const delta = (e.clientX - s.startX) * sensitivity
-      if (!s.active && Math.abs(delta) < 3) return
+      const rawDelta = e.clientX - s.startX
+      if (!s.active && Math.abs(rawDelta) < 3) return
       if (!s.active) {
         s.active = true
         onEditBeginRef.current?.()
@@ -82,7 +85,7 @@ function useAxisScrub(
         document.body.style.cursor = 'ew-resize'
         document.body.style.userSelect = 'none'
       }
-      onChangeRef.current(snapWorldScalar(s.startValue + delta), s.companion)
+      onChangeRef.current(snapTo(s.startValue + rawDelta * sensitivity, snapStep), s.companion)
     },
     [sensitivity],
   )
@@ -184,6 +187,12 @@ export function SpriteInstanceControls({
   onEditEnd?: (committed: boolean) => void
 }) {
   // ── Local state mirroring the Sprite properties ──────────────────────────
+  const [scaleLinked, setScaleLinked] = useState(true)
+  const scaleLinkedRef = useRef(scaleLinked)
+  scaleLinkedRef.current = scaleLinked
+  /** Ratio Y/X (or X/Y) captured at the start of a scrub drag, for proportional scaling. */
+  const scaleLinkedRatioRef = useRef(1)
+
   const [scaleX, setScaleX] = useState(() => row.sprite.scale.x)
   const [scaleY, setScaleY] = useState(() => row.sprite.scale.y)
   const [rotationDeg, setRotationDeg] = useState(() =>
@@ -250,20 +259,44 @@ export function SpriteInstanceControls({
 
   const scaleXScrub = useAxisScrub(
     disabled,
-    () => ({ value: row.sprite.scale.x, companion: row.sprite.scale.y }),
-    (newVal) => { onEditBegin?.(); setScaleX(Math.max(0.01, newVal)); onEditEnd?.(true) },
+    () => {
+      const sx = row.sprite.scale.x
+      const sy = row.sprite.scale.y
+      scaleLinkedRatioRef.current = sx !== 0 ? sy / sx : 1
+      return { value: sx, companion: sy }
+    },
+    (newVal) => {
+      const clamped = Math.max(0.01, newVal)
+      onEditBegin?.()
+      setScaleX(clamped)
+      if (scaleLinkedRef.current) setScaleY(Math.max(0.01, clamped * scaleLinkedRatioRef.current))
+      onEditEnd?.(true)
+    },
     undefined,
     undefined,
     0.01,
+    0.1,
   )
 
   const scaleYScrub = useAxisScrub(
     disabled,
-    () => ({ value: row.sprite.scale.y, companion: row.sprite.scale.x }),
-    (newVal) => { onEditBegin?.(); setScaleY(Math.max(0.01, newVal)); onEditEnd?.(true) },
+    () => {
+      const sx = row.sprite.scale.x
+      const sy = row.sprite.scale.y
+      scaleLinkedRatioRef.current = sy !== 0 ? sx / sy : 1
+      return { value: sy, companion: sx }
+    },
+    (newVal) => {
+      const clamped = Math.max(0.01, newVal)
+      onEditBegin?.()
+      setScaleY(clamped)
+      if (scaleLinkedRef.current) setScaleX(Math.max(0.01, clamped * scaleLinkedRatioRef.current))
+      onEditEnd?.(true)
+    },
     undefined,
     undefined,
     0.01,
+    0.1,
   )
 
   const rotScrub = useAxisScrub(
@@ -336,16 +369,28 @@ export function SpriteInstanceControls({
   const commitScaleX = useCallback(() => {
     if (scaleXEdit === null) return
     const v = parseCoord(scaleXEdit)
-    if (v !== null) { onEditBegin?.(); setScaleX(Math.max(0.01, v)); onEditEnd?.(true) }
+    if (v !== null) {
+      const clamped = Math.max(0.01, v)
+      onEditBegin?.()
+      setScaleX(clamped)
+      if (scaleLinked && scaleX !== 0) setScaleY(Math.max(0.01, clamped * (scaleY / scaleX)))
+      onEditEnd?.(true)
+    }
     setScaleXEdit(null)
-  }, [scaleXEdit, onEditBegin, onEditEnd])
+  }, [scaleXEdit, scaleLinked, scaleX, scaleY, onEditBegin, onEditEnd])
 
   const commitScaleY = useCallback(() => {
     if (scaleYEdit === null) return
     const v = parseCoord(scaleYEdit)
-    if (v !== null) { onEditBegin?.(); setScaleY(Math.max(0.01, v)); onEditEnd?.(true) }
+    if (v !== null) {
+      const clamped = Math.max(0.01, v)
+      onEditBegin?.()
+      setScaleY(clamped)
+      if (scaleLinked && scaleY !== 0) setScaleX(Math.max(0.01, clamped * (scaleX / scaleY)))
+      onEditEnd?.(true)
+    }
     setScaleYEdit(null)
-  }, [scaleYEdit, onEditBegin, onEditEnd])
+  }, [scaleYEdit, scaleLinked, scaleX, scaleY, onEditBegin, onEditEnd])
 
   const commitRot = useCallback(() => {
     if (rotEdit === null) return
@@ -487,6 +532,7 @@ export function SpriteInstanceControls({
                 X {scaleX.toFixed(3)}
               </span>
             )}
+
             {/* Scale Y */}
             {scaleYEdit !== null ? (
               <label className="spine-world-position-edit">
@@ -517,6 +563,32 @@ export function SpriteInstanceControls({
                 Y {scaleY.toFixed(3)}
               </span>
             )}
+
+            {/* Proportional link toggle */}
+            <button
+              type="button"
+              className={`sprite-scale-link${scaleLinked ? ' is-linked' : ''}`}
+              onClick={() => setScaleLinked((v) => !v)}
+              title={scaleLinked ? 'Proportional scaling on — click to unlock' : 'Proportional scaling off — click to lock'}
+              aria-pressed={scaleLinked}
+              aria-label="Toggle proportional scale"
+            >
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {scaleLinked ? (
+                  <>
+                    <path d="M6.5 9.5a3 3 0 0 0 4.243 0l1.414-1.414a3 3 0 0 0-4.243-4.243L6.5 5.257"/>
+                    <path d="M9.5 6.5a3 3 0 0 0-4.243 0L3.843 7.914a3 3 0 0 0 4.243 4.243L9.5 10.743"/>
+                  </>
+                ) : (
+                  <>
+                    <path d="M6.5 9.5a3 3 0 0 0 4.243 0l1.414-1.414a3 3 0 0 0-4.243-4.243L6.5 5.257" strokeOpacity="0.35"/>
+                    <path d="M9.5 6.5a3 3 0 0 0-4.243 0L3.843 7.914a3 3 0 0 0 4.243 4.243L9.5 10.743" strokeOpacity="0.35"/>
+                    <line x1="10" y1="6" x2="13" y2="3" strokeOpacity="0.7"/>
+                    <line x1="12" y1="4" x2="13" y2="3" strokeOpacity="0.7"/>
+                  </>
+                )}
+              </svg>
+            </button>
           </div>
         </div>
 

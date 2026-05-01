@@ -2064,6 +2064,22 @@
 .help-badge--warn  { background: rgba(210,160,40,0.25); color: #d4a039; }
 .help-badge--info  { background: rgba(60,140,220,0.2);  color: #6ab4f0; }
 
+/* Inline type badges used inside help text */
+.help-badge-inline {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.help-badge-inline--spine    { background: rgba(60,210,130,0.18); color: #3dd68c; border: 1px solid rgba(60,210,130,0.35); }
+.help-badge-inline--sprite   { background: rgba(60,140,220,0.18); color: #5ba4ef; border: 1px solid rgba(60,140,220,0.35); }
+.help-badge-inline--font     { background: rgba(210,160,40,0.18); color: #d4a039; border: 1px solid rgba(210,160,40,0.35); }
+.help-badge-inline--particles{ background: rgba(160,80,220,0.18); color: #b07ef8; border: 1px solid rgba(160,80,220,0.35); }
+
 /* Project error message in the dropdown */
 .editor-menu-project-error {
   margin: 0 0 6px;
@@ -2318,8 +2334,40 @@
 
 .sprite-scale-values {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.sprite-scale-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255,255,255,0.25);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.sprite-scale-link:hover {
+  color: rgba(255,255,255,0.6);
+  border-color: rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.05);
+}
+.sprite-scale-link.is-linked {
+  color: #3dd68c;
+  border-color: rgba(61,214,140,0.45);
+  background: rgba(61,214,140,0.08);
+}
+.sprite-scale-link.is-linked:hover {
+  color: #5ee8a4;
+  border-color: rgba(61,214,140,0.7);
+  background: rgba(61,214,140,0.15);
 }
 
 .sprite-rotation-readout {
