@@ -181,18 +181,27 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     }
   })
 
-  const sprites: SpriteObject[] = spriteRows.map((row) => ({
-    id: row.id,
-    displayName: row.displayName,
-    imageFile: row.sourceFile.name,
-    position: { x: row.sprite.position.x, y: row.sprite.position.y },
-    scaleX: row.sprite.scale.x,
-    scaleY: row.sprite.scale.y,
-    rotation: row.sprite.rotation,
-    alpha: row.sprite.alpha,
-    layerVisible: row.layerVisible,
-    locked: row.locked,
-  }))
+  const sprites: SpriteObject[] = spriteRows.map((row) => {
+    const base: SpriteObject = {
+      id: row.id,
+      displayName: row.displayName,
+      imageFile: row.sourceFile.name,
+      position: { x: row.sprite.position.x, y: row.sprite.position.y },
+      scaleX: row.sprite.scale.x,
+      scaleY: row.sprite.scale.y,
+      rotation: row.sprite.rotation,
+      alpha: row.sprite.alpha,
+      layerVisible: row.layerVisible,
+      locked: row.locked,
+    }
+    if (row.nineSlice) {
+      base.nineSlice = true
+      base.nineSliceInsets = { ...row.nineSliceInsets }
+      base.nineSliceWidth = row.sprite.width
+      base.nineSliceHeight = row.sprite.height
+    }
+    return base
+  })
 
   // Compute layerOrder: use provided value, or fall back to objects order
   const resolvedLayerOrder = layerOrder ?? [...rows.map((r) => r.id), ...spriteRows.map((r) => r.id)]

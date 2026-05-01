@@ -563,13 +563,12 @@ function App() {
 
   // Sync z-order for all objects (spines + sprites) based on unified layerOrder.
   useEffect(() => {
-    type LayerEntry = { kind: 'spine' | 'sprite'; obj: Spine | import('pixi.js').Sprite }
-    const order: LayerEntry[] = []
+    const order: Array<{ kind: 'spine' | 'sprite'; obj: never }> = []
     for (const id of layerOrder) {
       const spine = spineRows.find((r) => r.id === id)
-      if (spine) { order.push({ kind: 'spine', obj: spine.spine }); continue }
-      const sprite = spriteRows.find((r) => r.id === id)
-      if (sprite) { order.push({ kind: 'sprite', obj: sprite.sprite }); continue }
+      if (spine) { order.push({ kind: 'spine', obj: spine.spine as never }); continue }
+      const spriteRow = spriteRows.find((r) => r.id === id)
+      if (spriteRow) { order.push({ kind: 'sprite', obj: spriteRow.sprite as never }); continue }
     }
     if (order.length > 0) stageRef.current?.syncFullLayerOrder(order)
   }, [layerOrder, spineRows, spriteRows])
@@ -702,6 +701,8 @@ function App() {
             sprite,
             locked: false,
             layerVisible: true,
+            nineSlice: false,
+            nineSliceInsets: { left: 10, top: 10, right: 10, bottom: 10 },
           }
           setSpriteRows((prev) => [...prev, row])
           setLayerOrder((prev) => [id, ...prev])
@@ -736,6 +737,8 @@ function App() {
             sprite,
             locked: false,
             layerVisible: true,
+            nineSlice: false,
+            nineSliceInsets: { left: 10, top: 10, right: 10, bottom: 10 },
           }
           setSpriteRows((prev) => [...prev, row])
           setLayerOrder((prev) => [id, ...prev])
@@ -1479,8 +1482,9 @@ function App() {
         sprite.rotation = saved.rotation
         sprite.alpha = saved.alpha
         sprite.visible = saved.layerVisible
-        // Use the saved id as the row id for layerOrder restoration
-        restoredSpriteRows.push({
+
+        const insets = saved.nineSliceInsets ?? { left: 10, top: 10, right: 10, bottom: 10 }
+        const row: SpriteRow = {
           id: saved.id,
           kind: 'sprite',
           displayName: saved.displayName,
@@ -1489,7 +1493,20 @@ function App() {
           sprite,
           locked: saved.locked,
           layerVisible: saved.layerVisible,
-        })
+          nineSlice: false,
+          nineSliceInsets: insets,
+        }
+
+        if (saved.nineSlice) {
+          stageRef.current?.enableNineSlice(row, insets)
+          if (saved.nineSliceWidth != null && saved.nineSliceHeight != null) {
+            row.sprite.width = saved.nineSliceWidth
+            row.sprite.height = saved.nineSliceHeight
+          }
+          row.nineSlice = true
+        }
+
+        restoredSpriteRows.push(row)
       } catch {
         URL.revokeObjectURL(objectUrl)
       }

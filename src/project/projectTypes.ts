@@ -61,6 +61,14 @@ export type SpriteObject = {
   alpha: number
   layerVisible: boolean
   locked: boolean
+  /** Whether 9-slice scaling is active. Absent in older files = false. */
+  nineSlice?: boolean
+  /** Inset distances (source texture pixels). Present only when nineSlice is true. */
+  nineSliceInsets?: { left: number; top: number; right: number; bottom: number }
+  /** Rendered width in world units when 9-slice is active. */
+  nineSliceWidth?: number
+  /** Rendered height in world units when 9-slice is active. */
+  nineSliceHeight?: number
 }
 
 /** Viewport / scene-level settings stored in the project. */

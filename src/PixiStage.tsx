@@ -8,7 +8,17 @@ import {
 import { Application, Container, Graphics, Point, Sprite } from 'pixi.js'
 import { Spine } from '@esotericsoftware/spine-pixi-v8'
 import { attachSpineDrag, detachSpineDrag } from './pixi/attachSpineDrag'
-import { attachSpriteDrag, createPixiSprite, addSpriteToWorld, destroyPixiSprite } from './pixi/spriteLayer'
+import {
+  attachSpriteDrag,
+  createPixiSprite,
+  addSpriteToWorld,
+  destroyPixiSprite,
+  convertToNineSlice,
+  convertToSprite,
+  rebuildNineSlice,
+  type AnySprite,
+} from './pixi/spriteLayer'
+import type { NineSliceInsets, SpriteRow } from './SpriteRow'
 import { attachSpineToHostPlaceholder } from './pixi/placeholderAttachment'
 import {
   attachStageNavigation,
@@ -168,18 +178,33 @@ export type PixiStageHandle = {
   /** Load an image from an object URL, add it to the world container, and return the Sprite. */
   addSprite(objectUrl: string): Promise<Sprite>
   /** Remove a single sprite from the world and destroy it (also revokes objectUrl). */
-  removeSprite(sprite: Sprite, objectUrl?: string): void
+  removeSprite(sprite: AnySprite, objectUrl?: string): void
   /** Remove all sprites from the world and destroy them. */
   clearSprites(): void
   /** Sprite placement origin in **world** space. */
-  getSpriteWorldPosition(sprite: Sprite): { x: number; y: number } | null
+  getSpriteWorldPosition(sprite: AnySprite): { x: number; y: number } | null
   /** Move sprite to world (x, y), snapped to 0.5 grid. */
-  setSpriteWorldPosition(sprite: Sprite, x: number, y: number): boolean
+  setSpriteWorldPosition(sprite: AnySprite, x: number, y: number): boolean
   /**
    * Synchronise z-order for the full mixed-type layer list.
    * `order[0]` = front (top of hierarchy), last = back (background).
    */
-  syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | Sprite }>): void
+  syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | AnySprite }>): void
+  /**
+   * Convert a plain Sprite to a NineSliceSprite with the given insets.
+   * Mutates `row.sprite` in place and returns the new NineSliceSprite.
+   */
+  enableNineSlice(row: SpriteRow, insets: NineSliceInsets): void
+  /**
+   * Rebuild the NineSliceSprite with updated insets (PixiJS requires recreation).
+   * Mutates `row.sprite` in place.
+   */
+  updateNineSliceInsets(row: SpriteRow, insets: NineSliceInsets): void
+  /**
+   * Convert a NineSliceSprite back to a plain Sprite.
+   * Mutates `row.sprite` in place.
+   */
+  disableNineSlice(row: SpriteRow): void
 }
 
 function bringOverlayToFront(world: Container, overlay: Graphics) {
@@ -1030,7 +1055,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       return sprite
     },
 
-    removeSprite(sprite: Sprite, objectUrl?: string) {
+    removeSprite(sprite: AnySprite, objectUrl?: string) {
       const world = worldRef.current
       const overlay = overlayRef.current
       if (!world) return
@@ -1040,7 +1065,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       if (overlay) bringOverlayToFront(world, overlay)
     },
 
-    getSpriteWorldPosition(sprite: Sprite): { x: number; y: number } | null {
+    getSpriteWorldPosition(sprite: AnySprite): { x: number; y: number } | null {
       const world = worldRef.current
       if (!world || sprite.destroyed) return null
       const g = sprite.getGlobalPosition(new Point())
@@ -1048,7 +1073,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       return { x: g.x, y: g.y }
     },
 
-    setSpriteWorldPosition(sprite: Sprite, x: number, y: number): boolean {
+    setSpriteWorldPosition(sprite: AnySprite, x: number, y: number): boolean {
       const world = worldRef.current
       if (!world || sprite.destroyed) return false
       const s = snapWorldXY(x, y)
@@ -1056,7 +1081,79 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       return true
     },
 
-    syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | Sprite }>) {
+    enableNineSlice(row: SpriteRow, insets: NineSliceInsets) {
+      const application = appRef.current
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!application || !world) return
+      const dragOpts = {
+        onLeftPointerDown: () => onSpriteCanvasPointerDownRef.current?.(row.sprite),
+        isDragEnabled: () => getSpriteDragEnabledRef.current?.(row.sprite) ?? true,
+        onDragStart: (cx: number, cy: number) => {
+          draggingSpriteRef.current = row.sprite
+          tipApplyFromClientRef.current(cx, cy)
+          onSpriteDragStartRef.current?.()
+        },
+        onDragEnd: () => {
+          draggingSpriteRef.current = null
+          onSpriteDragEndRef.current?.()
+          const last = lastPointerClientRef.current
+          requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
+        },
+      }
+      convertToNineSlice(row, world, insets, dragOpts as never)
+      if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    updateNineSliceInsets(row: SpriteRow, insets: NineSliceInsets) {
+      const application = appRef.current
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!application || !world) return
+      const dragOpts = {
+        onLeftPointerDown: () => onSpriteCanvasPointerDownRef.current?.(row.sprite),
+        isDragEnabled: () => getSpriteDragEnabledRef.current?.(row.sprite) ?? true,
+        onDragStart: (cx: number, cy: number) => {
+          draggingSpriteRef.current = row.sprite
+          tipApplyFromClientRef.current(cx, cy)
+          onSpriteDragStartRef.current?.()
+        },
+        onDragEnd: () => {
+          draggingSpriteRef.current = null
+          onSpriteDragEndRef.current?.()
+          const last = lastPointerClientRef.current
+          requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
+        },
+      }
+      rebuildNineSlice(row, world, insets, dragOpts as never)
+      if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    disableNineSlice(row: SpriteRow) {
+      const application = appRef.current
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!application || !world) return
+      const dragOpts = {
+        onLeftPointerDown: () => onSpriteCanvasPointerDownRef.current?.(row.sprite),
+        isDragEnabled: () => getSpriteDragEnabledRef.current?.(row.sprite) ?? true,
+        onDragStart: (cx: number, cy: number) => {
+          draggingSpriteRef.current = row.sprite
+          tipApplyFromClientRef.current(cx, cy)
+          onSpriteDragStartRef.current?.()
+        },
+        onDragEnd: () => {
+          draggingSpriteRef.current = null
+          onSpriteDragEndRef.current?.()
+          const last = lastPointerClientRef.current
+          requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
+        },
+      }
+      convertToSprite(row, world, dragOpts as never)
+      if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | AnySprite }>) {
       const n = order.length
       for (let i = 0; i < n; i++) {
         // order[0] = front = highest zIndex

@@ -8,7 +8,8 @@ import {
   type RefObject,
 } from 'react'
 import type { PixiStageHandle } from './PixiStage'
-import type { SpriteRow } from './SpriteRow'
+import type { NineSliceInsets, SpriteRow } from './SpriteRow'
+import { defaultNineSliceInsets } from './pixi/spriteLayer'
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -208,11 +209,85 @@ export function SpriteInstanceControls({
     setOpacity(Math.round(row.sprite.alpha * 100))
   }, [row.id, row.sprite])
 
-  // Sync local state → Pixi Sprite
-  useEffect(() => { row.sprite.scale.x = scaleX }, [scaleX, row.sprite])
-  useEffect(() => { row.sprite.scale.y = scaleY }, [scaleY, row.sprite])
+  // Sync local state → Pixi Sprite (only when NOT in 9-slice mode)
+  useEffect(() => { if (!row.nineSlice) row.sprite.scale.x = scaleX }, [scaleX, row.sprite, row.nineSlice])
+  useEffect(() => { if (!row.nineSlice) row.sprite.scale.y = scaleY }, [scaleY, row.sprite, row.nineSlice])
   useEffect(() => { row.sprite.rotation = (rotationDeg * Math.PI) / 180 }, [rotationDeg, row.sprite])
   useEffect(() => { row.sprite.alpha = opacity / 100 }, [opacity, row.sprite])
+
+  // ── 9-slice state ─────────────────────────────────────────────────────────
+  const [nineSliceEnabled, setNineSliceEnabled] = useState(() => row.nineSlice)
+  const [insets, setInsets] = useState<NineSliceInsets>(() => ({ ...row.nineSliceInsets }))
+  // Width/Height in pixels (for 9-slice mode)
+  const [sliceWidth, setSliceWidth] = useState(() => row.sprite.width)
+  const [sliceHeight, setSliceHeight] = useState(() => row.sprite.height)
+  // Proportional link for width/height
+  const [sizeLinked, setSizeLinked] = useState(true)
+  const sizeLinkedRef = useRef(sizeLinked)
+  sizeLinkedRef.current = sizeLinked
+  const sizeLinkedRatioRef = useRef(1)
+
+  // Reset 9-slice state when row changes
+  useEffect(() => {
+    setNineSliceEnabled(row.nineSlice)
+    setInsets({ ...row.nineSliceInsets })
+    setSliceWidth(row.sprite.width)
+    setSliceHeight(row.sprite.height)
+  }, [row.id, row.sprite, row.nineSlice, row.nineSliceInsets])
+
+  // Sync width/height → NineSliceSprite
+  useEffect(() => {
+    if (!nineSliceEnabled) return
+    row.sprite.width = sliceWidth
+  }, [sliceWidth, nineSliceEnabled, row.sprite])
+  useEffect(() => {
+    if (!nineSliceEnabled) return
+    row.sprite.height = sliceHeight
+  }, [sliceHeight, nineSliceEnabled, row.sprite])
+
+  const handleToggleNineSlice = useCallback(() => {
+    const stage = viewportStageRef?.current
+    if (!stage) return
+    onEditBegin?.()
+    if (!nineSliceEnabled) {
+      // Compute sensible default insets from texture size
+      const texW = row.sprite.texture?.width ?? row.sprite.width
+      const texH = row.sprite.texture?.height ?? row.sprite.height
+      const defaultInsets = defaultNineSliceInsets(texW, texH)
+      const newInsets: NineSliceInsets = {
+        left:   Math.min(row.nineSliceInsets.left,   Math.floor(texW / 3)),
+        top:    Math.min(row.nineSliceInsets.top,    Math.floor(texH / 3)),
+        right:  Math.min(row.nineSliceInsets.right,  Math.floor(texW / 3)),
+        bottom: Math.min(row.nineSliceInsets.bottom, Math.floor(texH / 3)),
+      }
+      // If all insets are still the uninitialised default, use auto
+      if (newInsets.left === 10 && newInsets.top === 10) Object.assign(newInsets, defaultInsets)
+      const w = row.sprite.width
+      const h = row.sprite.height
+      row.nineSliceInsets = newInsets
+      stage.enableNineSlice(row, newInsets)
+      row.nineSlice = true
+      setInsets(newInsets)
+      setSliceWidth(w)
+      setSliceHeight(h)
+    } else {
+      stage.disableNineSlice(row)
+      row.nineSlice = false
+      // Reset scale to 1 so the sprite appears at natural texture size
+      setScaleX(row.sprite.scale.x)
+      setScaleY(row.sprite.scale.y)
+    }
+    setNineSliceEnabled((v) => !v)
+    onEditEnd?.(true)
+  }, [nineSliceEnabled, row, viewportStageRef, onEditBegin, onEditEnd])
+
+  const applyInsets = useCallback((newInsets: NineSliceInsets) => {
+    const stage = viewportStageRef?.current
+    if (!stage) return
+    row.nineSliceInsets = newInsets
+    stage.updateNineSliceInsets(row, newInsets)
+    setInsets(newInsets)
+  }, [row, viewportStageRef])
 
   // ── World position edit state ─────────────────────────────────────────────
   const [posEdit, setPosEdit] = useState<null | { axis: 'x' | 'y'; draft: string }>(null)
@@ -308,6 +383,48 @@ export function SpriteInstanceControls({
     1,
   )
 
+  const sliceWidthScrub = useAxisScrub(
+    disabled,
+    () => {
+      const w = row.sprite.width
+      const h = row.sprite.height
+      sizeLinkedRatioRef.current = w !== 0 ? h / w : 1
+      return { value: w, companion: h }
+    },
+    (newVal) => {
+      const clamped = Math.max(1, newVal)
+      onEditBegin?.()
+      setSliceWidth(clamped)
+      if (sizeLinkedRef.current) setSliceHeight(Math.max(1, clamped * sizeLinkedRatioRef.current))
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+  )
+
+  const sliceHeightScrub = useAxisScrub(
+    disabled,
+    () => {
+      const w = row.sprite.width
+      const h = row.sprite.height
+      sizeLinkedRatioRef.current = h !== 0 ? w / h : 1
+      return { value: h, companion: w }
+    },
+    (newVal) => {
+      const clamped = Math.max(1, newVal)
+      onEditBegin?.()
+      setSliceHeight(clamped)
+      if (sizeLinkedRef.current) setSliceWidth(Math.max(1, clamped * sizeLinkedRatioRef.current))
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+  )
+
   // ── Position double-click edit ─────────────────────────────────────────────
   const beginEditPosAxis = useCallback(
     (axis: 'x' | 'y') => {
@@ -348,23 +465,31 @@ export function SpriteInstanceControls({
     commitPosEdit()
   }, [commitPosEdit])
 
-  // ── Inline edit helpers for Scale X/Y and Rotation ────────────────────────
+  // ── Inline edit helpers for Scale X/Y, Rotation, and 9-slice Width/Height ─
   const [scaleXEdit, setScaleXEdit] = useState<string | null>(null)
   const [scaleYEdit, setScaleYEdit] = useState<string | null>(null)
   const [rotEdit, setRotEdit] = useState<string | null>(null)
+  const [sliceWEdit, setSliceWEdit] = useState<string | null>(null)
+  const [sliceHEdit, setSliceHEdit] = useState<string | null>(null)
 
-  useEffect(() => { setScaleXEdit(null); setScaleYEdit(null); setRotEdit(null) }, [row.id])
+  useEffect(() => { setScaleXEdit(null); setScaleYEdit(null); setRotEdit(null); setSliceWEdit(null); setSliceHEdit(null) }, [row.id])
 
   const scaleXInputRef = useRef<HTMLInputElement | null>(null)
   const scaleYInputRef = useRef<HTMLInputElement | null>(null)
   const rotInputRef = useRef<HTMLInputElement | null>(null)
+  const sliceWInputRef = useRef<HTMLInputElement | null>(null)
+  const sliceHInputRef = useRef<HTMLInputElement | null>(null)
   const skipScaleXBlur = useRef(false)
   const skipScaleYBlur = useRef(false)
   const skipRotBlur = useRef(false)
+  const skipSliceWBlur = useRef(false)
+  const skipSliceHBlur = useRef(false)
 
   useLayoutEffect(() => { if (scaleXEdit !== null) { scaleXInputRef.current?.focus(); scaleXInputRef.current?.select() } }, [scaleXEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (scaleYEdit !== null) { scaleYInputRef.current?.focus(); scaleYInputRef.current?.select() } }, [scaleYEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (rotEdit !== null) { rotInputRef.current?.focus(); rotInputRef.current?.select() } }, [rotEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { if (sliceWEdit !== null) { sliceWInputRef.current?.focus(); sliceWInputRef.current?.select() } }, [sliceWEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { if (sliceHEdit !== null) { sliceHInputRef.current?.focus(); sliceHInputRef.current?.select() } }, [sliceHEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commitScaleX = useCallback(() => {
     if (scaleXEdit === null) return
@@ -398,6 +523,32 @@ export function SpriteInstanceControls({
     if (v !== null) { onEditBegin?.(); setRotationDeg(v); onEditEnd?.(true) }
     setRotEdit(null)
   }, [rotEdit, onEditBegin, onEditEnd])
+
+  const commitSliceW = useCallback(() => {
+    if (sliceWEdit === null) return
+    const v = parseCoord(sliceWEdit)
+    if (v !== null) {
+      const clamped = Math.max(1, Math.round(v))
+      onEditBegin?.()
+      setSliceWidth(clamped)
+      if (sizeLinked && sliceWidth !== 0) setSliceHeight(Math.max(1, Math.round(clamped * (sliceHeight / sliceWidth))))
+      onEditEnd?.(true)
+    }
+    setSliceWEdit(null)
+  }, [sliceWEdit, sizeLinked, sliceWidth, sliceHeight, onEditBegin, onEditEnd])
+
+  const commitSliceH = useCallback(() => {
+    if (sliceHEdit === null) return
+    const v = parseCoord(sliceHEdit)
+    if (v !== null) {
+      const clamped = Math.max(1, Math.round(v))
+      onEditBegin?.()
+      setSliceHeight(clamped)
+      if (sizeLinked && sliceHeight !== 0) setSliceWidth(Math.max(1, Math.round(clamped * (sliceWidth / sliceHeight))))
+      onEditEnd?.(true)
+    }
+    setSliceHEdit(null)
+  }, [sliceHEdit, sizeLinked, sliceWidth, sliceHeight, onEditBegin, onEditEnd])
 
   const onPanelPointerDownCapture = useCallback(
     (e: { button: number; target: EventTarget | null }) => {
@@ -498,8 +649,8 @@ export function SpriteInstanceControls({
           </div>
         </div>
 
-        {/* Scale X/Y */}
-        <div className="sprite-field sprite-scale-field">
+        {/* Scale X/Y — hidden when 9-slice is active */}
+        {!nineSliceEnabled && <div className="sprite-field sprite-scale-field">
           <span className="sprite-field-label">Scale</span>
           <div className="sprite-scale-values">
             {/* Scale X */}
@@ -590,7 +741,99 @@ export function SpriteInstanceControls({
               </svg>
             </button>
           </div>
-        </div>
+        </div>}
+
+        {/* Width/Height — shown only when 9-slice is active */}
+        {nineSliceEnabled && <div className="sprite-field sprite-scale-field">
+          <span className="sprite-field-label">Size (px)</span>
+          <div className="sprite-scale-values">
+            {/* Width */}
+            {sliceWEdit !== null ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">W</span>
+                <input
+                  ref={sliceWInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={sliceWEdit}
+                  onChange={(e) => setSliceWEdit(e.target.value)}
+                  onBlur={() => { if (skipSliceWBlur.current) { skipSliceWBlur.current = false; return } commitSliceW() }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); skipSliceWBlur.current = true; commitSliceW() } else if (e.key === 'Escape') { e.preventDefault(); skipSliceWBlur.current = true; setSliceWEdit(null) } }}
+                />
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => !disabled && setSliceWEdit(String(Math.round(sliceWidth)))}
+                onPointerDown={sliceWidthScrub.handlePointerDown}
+                onPointerMove={sliceWidthScrub.handlePointerMove}
+                onPointerUp={sliceWidthScrub.handlePointerUp}
+                onPointerCancel={sliceWidthScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                W {Math.round(sliceWidth)}
+              </span>
+            )}
+            {/* Height */}
+            {sliceHEdit !== null ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">H</span>
+                <input
+                  ref={sliceHInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={sliceHEdit}
+                  onChange={(e) => setSliceHEdit(e.target.value)}
+                  onBlur={() => { if (skipSliceHBlur.current) { skipSliceHBlur.current = false; return } commitSliceH() }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); skipSliceHBlur.current = true; commitSliceH() } else if (e.key === 'Escape') { e.preventDefault(); skipSliceHBlur.current = true; setSliceHEdit(null) } }}
+                />
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => !disabled && setSliceHEdit(String(Math.round(sliceHeight)))}
+                onPointerDown={sliceHeightScrub.handlePointerDown}
+                onPointerMove={sliceHeightScrub.handlePointerMove}
+                onPointerUp={sliceHeightScrub.handlePointerUp}
+                onPointerCancel={sliceHeightScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                H {Math.round(sliceHeight)}
+              </span>
+            )}
+            {/* Proportional size link */}
+            <button
+              type="button"
+              className={`sprite-scale-link${sizeLinked ? ' is-linked' : ''}`}
+              onClick={() => setSizeLinked((v) => !v)}
+              title={sizeLinked ? 'Proportional size on — click to unlock' : 'Proportional size off — click to lock'}
+              aria-pressed={sizeLinked}
+              aria-label="Toggle proportional size"
+            >
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {sizeLinked ? (
+                  <>
+                    <path d="M6.5 9.5a3 3 0 0 0 4.243 0l1.414-1.414a3 3 0 0 0-4.243-4.243L6.5 5.257"/>
+                    <path d="M9.5 6.5a3 3 0 0 0-4.243 0L3.843 7.914a3 3 0 0 0 4.243 4.243L9.5 10.743"/>
+                  </>
+                ) : (
+                  <>
+                    <path d="M6.5 9.5a3 3 0 0 0 4.243 0l1.414-1.414a3 3 0 0 0-4.243-4.243L6.5 5.257" strokeOpacity="0.35"/>
+                    <path d="M9.5 6.5a3 3 0 0 0-4.243 0L3.843 7.914a3 3 0 0 0 4.243 4.243L9.5 10.743" strokeOpacity="0.35"/>
+                    <line x1="10" y1="6" x2="13" y2="3" strokeOpacity="0.7"/>
+                    <line x1="12" y1="4" x2="13" y2="3" strokeOpacity="0.7"/>
+                  </>
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>}
 
         {/* Rotation */}
         <div className="sprite-field">
@@ -624,6 +867,44 @@ export function SpriteInstanceControls({
             >
               {rotationDeg.toFixed(1)}°
             </span>
+          )}
+        </div>
+
+        {/* 9-Slice toggle + insets */}
+        <div className="sprite-field sprite-nineslice-row">
+          <label className="sprite-nineslice-toggle">
+            <input
+              type="checkbox"
+              checked={nineSliceEnabled}
+              disabled={disabled}
+              onChange={handleToggleNineSlice}
+            />
+            <span>9-slice</span>
+          </label>
+          {nineSliceEnabled && (
+            <div className="sprite-nineslice-insets" title="Corner insets in source texture pixels">
+              {(['left', 'top', 'right', 'bottom'] as const).map((side) => (
+                <label key={side} className="sprite-nineslice-inset-field">
+                  <span className="sprite-nineslice-inset-label">{side[0].toUpperCase()}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    disabled={disabled}
+                    className="sprite-nineslice-inset-input"
+                    value={insets[side]}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.round(Number(e.target.value)))
+                      if (!Number.isFinite(v)) return
+                      onEditBegin?.()
+                      const newInsets = { ...insets, [side]: v }
+                      applyInsets(newInsets)
+                      onEditEnd?.(true)
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
           )}
         </div>
 

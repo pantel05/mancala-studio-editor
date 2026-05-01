@@ -1,12 +1,20 @@
-import { Sprite, type Application, type Container, type FederatedPointerEvent } from 'pixi.js'
+import { NineSliceSprite, Sprite, Texture, type Application, type Container, type FederatedPointerEvent } from 'pixi.js'
 import { Point } from 'pixi.js'
+import type { NineSliceInsets, SpriteRow } from '../SpriteRow'
 import { snapWorldScalar } from './snapWorldPosition'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** Both Sprite and NineSliceSprite share the same positional / visual API. */
+export type AnySprite = Sprite | NineSliceSprite
 
 // ---------------------------------------------------------------------------
 // Drag
 // ---------------------------------------------------------------------------
 
-const dragCleanups = new WeakMap<Sprite, () => void>()
+const dragCleanups = new WeakMap<AnySprite, () => void>()
 
 export type AttachSpriteDragOptions = {
   onLeftPointerDown?: () => void
@@ -16,7 +24,7 @@ export type AttachSpriteDragOptions = {
 }
 
 export function attachSpriteDrag(
-  sprite: Sprite,
+  sprite: AnySprite,
   app: Application,
   world: Container,
   opts?: AttachSpriteDragOptions,
@@ -80,7 +88,7 @@ export function attachSpriteDrag(
   dragCleanups.set(sprite, cleanup)
 }
 
-export function detachSpriteDrag(sprite: Sprite): void {
+export function detachSpriteDrag(sprite: AnySprite): void {
   const fn = dragCleanups.get(sprite)
   if (fn) {
     fn()
@@ -89,7 +97,7 @@ export function detachSpriteDrag(sprite: Sprite): void {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle
+// Lifecycle — plain Sprite
 // ---------------------------------------------------------------------------
 
 /**
@@ -113,12 +121,19 @@ export async function createPixiSprite(objectUrl: string): Promise<Sprite> {
 }
 
 /** Add a sprite to the world container and enable rendering. */
-export function addSpriteToWorld(world: Container, sprite: Sprite): void {
+export function addSpriteToWorld(world: Container, sprite: AnySprite): void {
   world.addChild(sprite)
 }
 
-/** Remove a sprite from its parent and destroy it. */
-export function destroyPixiSprite(sprite: Sprite, objectUrl?: string): void {
+/** Remove a sprite from its parent and destroy it (does NOT revoke the object URL). */
+function destroyAnySprite(sprite: AnySprite): void {
+  detachSpriteDrag(sprite)
+  sprite.parent?.removeChild(sprite)
+  sprite.destroy({ texture: false, textureSource: false })
+}
+
+/** Remove a sprite from its parent, destroy it, and optionally revoke the object URL. */
+export function destroyPixiSprite(sprite: AnySprite, objectUrl?: string): void {
   detachSpriteDrag(sprite)
   sprite.parent?.removeChild(sprite)
   sprite.destroy({ texture: true, textureSource: true })
@@ -126,6 +141,121 @@ export function destroyPixiSprite(sprite: Sprite, objectUrl?: string): void {
     try { URL.revokeObjectURL(objectUrl) } catch { /* ignore */ }
   }
 }
+
+// ---------------------------------------------------------------------------
+// 9-slice conversion
+// ---------------------------------------------------------------------------
+
+/**
+ * Default inset values for a texture: 1/4 of the shorter dimension, min 1.
+ */
+export function defaultNineSliceInsets(textureWidth: number, textureHeight: number): NineSliceInsets {
+  const v = Math.max(1, Math.floor(Math.min(textureWidth, textureHeight) / 4))
+  return { left: v, top: v, right: v, bottom: v }
+}
+
+/**
+ * Replace the row's plain Sprite with a NineSliceSprite using the same texture.
+ * Copies position, rotation, alpha, and visibility. Re-inserts at the same
+ * z-index in the world container. Re-attaches drag with the same options.
+ * Mutates `row.sprite` in place.
+ */
+export function convertToNineSlice(
+  row: SpriteRow,
+  world: Container,
+  insets: NineSliceInsets,
+  dragOpts?: AttachSpriteDragOptions,
+): NineSliceSprite {
+  const old = row.sprite
+  const texture: Texture = old.texture as Texture
+
+  const nss = new NineSliceSprite({
+    texture,
+    leftWidth:   insets.left,
+    topHeight:   insets.top,
+    rightWidth:  insets.right,
+    bottomHeight: insets.bottom,
+  })
+
+  // Match rendered pixel size to current visual size
+  nss.width  = old.width
+  nss.height = old.height
+  nss.position.copyFrom(old.position)
+  nss.rotation = old.rotation
+  nss.alpha = old.alpha
+  nss.visible = old.visible
+  // NineSliceSprite pivot at centre for consistent world-position behaviour
+  nss.pivot.set(nss.width / 2, nss.height / 2)
+
+  const zIndex = old.parent ? Array.from(old.parent.children).indexOf(old) : -1
+  destroyAnySprite(old)
+
+  if (zIndex >= 0 && zIndex < world.children.length) {
+    world.addChildAt(nss, zIndex)
+  } else {
+    world.addChild(nss)
+  }
+
+  if (dragOpts) attachSpriteDrag(nss, dragOpts as never, world, dragOpts)
+  row.sprite = nss
+  return nss
+}
+
+/**
+ * Replace the row's NineSliceSprite back to a plain Sprite.
+ * Copies position, rotation, alpha, and visibility. Re-inserts at the same
+ * z-index in the world container. Re-attaches drag with the same options.
+ * Mutates `row.sprite` in place.
+ */
+export function convertToSprite(
+  row: SpriteRow,
+  world: Container,
+  dragOpts?: AttachSpriteDragOptions,
+): Sprite {
+  const old = row.sprite
+  const texture: Texture = old.texture as Texture
+
+  const sprite = new Sprite(texture)
+  sprite.anchor.set(0.5, 0.5)
+  sprite.position.copyFrom(old.position)
+  sprite.rotation = old.rotation
+  sprite.alpha = old.alpha
+  sprite.visible = old.visible
+  // Restore scale so visual size matches the width/height of the nine-slice
+  sprite.scale.set(1, 1)
+
+  const zIndex = old.parent ? Array.from(old.parent.children).indexOf(old) : -1
+  destroyAnySprite(old)
+
+  if (zIndex >= 0 && zIndex < world.children.length) {
+    world.addChildAt(sprite, zIndex)
+  } else {
+    world.addChild(sprite)
+  }
+
+  if (dragOpts) attachSpriteDrag(sprite, dragOpts as never, world, dragOpts)
+  row.sprite = sprite
+  return sprite
+}
+
+/**
+ * Rebuild a NineSliceSprite in-place with new inset values.
+ * PixiJS does not allow mutating leftWidth/topHeight etc. after construction,
+ * so we destroy and recreate, preserving all other properties.
+ * Mutates `row.sprite` in place.
+ */
+export function rebuildNineSlice(
+  row: SpriteRow,
+  world: Container,
+  insets: NineSliceInsets,
+  dragOpts?: AttachSpriteDragOptions,
+): NineSliceSprite {
+  return convertToNineSlice(row, world, insets, dragOpts)
+}
+
+// ---------------------------------------------------------------------------
+// File type helpers
+// ---------------------------------------------------------------------------
 
 /** Image file extensions we treat as sprite assets (not Spine textures). */
 export const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif'])
