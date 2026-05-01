@@ -2209,7 +2209,7 @@
   color: #56b4e9;
 }
 
-/* Reserved for future object types */
+/* Reserved for future object types — FNT (font), VFX (particles) */
 .editor-hierarchy-badge--font {
   background: rgba(212, 160, 57, 0.12);
   border: 1px solid rgba(212, 160, 57, 0.35);

@@ -1884,7 +1884,7 @@ function App() {
                               <span className="editor-hierarchy-chevron" aria-hidden="true">▾</span>
                               <span className="editor-hierarchy-label">
                                 {spineRow ? (
-                                  <span className="editor-hierarchy-badge editor-hierarchy-badge--spine">SPINE</span>
+                                  <span className="editor-hierarchy-badge editor-hierarchy-badge--spine">SKL</span>
                                 ) : spriteRow ? (
                                   <span className="editor-hierarchy-badge editor-hierarchy-badge--sprite">IMG</span>
                                 ) : null}
