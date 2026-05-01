@@ -5,9 +5,10 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Application, Container, Graphics, Point } from 'pixi.js'
+import { Application, Container, Graphics, Point, Sprite } from 'pixi.js'
 import { Spine } from '@esotericsoftware/spine-pixi-v8'
 import { attachSpineDrag, detachSpineDrag } from './pixi/attachSpineDrag'
+import { attachSpriteDrag, createPixiSprite, addSpriteToWorld, destroyPixiSprite } from './pixi/spriteLayer'
 import { attachSpineToHostPlaceholder } from './pixi/placeholderAttachment'
 import {
   attachStageNavigation,
@@ -97,6 +98,14 @@ export type PixiStageProps = {
   onSpineDragStart?: () => void
   /** Canvas drag ended (for undo history). */
   onSpineDragEnd?: () => void
+  /** Left-click on a sprite on the canvas — sync hierarchy/inspector selection to that instance. */
+  onSpriteCanvasPointerDown?: (sprite: Sprite) => void
+  /** Per-frame check: return false to block starting a sprite drag. */
+  getSpriteDragEnabled?: (sprite: Sprite) => boolean
+  /** Sprite canvas drag began (for undo history). */
+  onSpriteDragStart?: () => void
+  /** Sprite canvas drag ended (for undo history). */
+  onSpriteDragEnd?: () => void
 }
 
 export type PixiStageHandle = {
@@ -153,6 +162,24 @@ export type PixiStageHandle = {
   setSpineBoneLocalOffset(spine: Spine, x: number, y: number): boolean
   /** Bone-local offset (spine.position.x/y) — meaningful only when the spine is nested under a placeholder. */
   getSpineBoneLocalOffset(spine: Spine): { x: number; y: number } | null
+
+  // --- Sprite methods ---
+
+  /** Load an image from an object URL, add it to the world container, and return the Sprite. */
+  addSprite(objectUrl: string): Promise<Sprite>
+  /** Remove a single sprite from the world and destroy it (also revokes objectUrl). */
+  removeSprite(sprite: Sprite, objectUrl?: string): void
+  /** Remove all sprites from the world and destroy them. */
+  clearSprites(): void
+  /** Sprite placement origin in **world** space. */
+  getSpriteWorldPosition(sprite: Sprite): { x: number; y: number } | null
+  /** Move sprite to world (x, y), snapped to 0.5 grid. */
+  setSpriteWorldPosition(sprite: Sprite, x: number, y: number): boolean
+  /**
+   * Synchronise z-order for the full mixed-type layer list.
+   * `order[0]` = front (top of hierarchy), last = back (background).
+   */
+  syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | Sprite }>): void
 }
 
 function bringOverlayToFront(world: Container, overlay: Graphics) {
@@ -287,6 +314,10 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     getSpineDragEnabled,
     onSpineDragStart,
     onSpineDragEnd,
+    onSpriteCanvasPointerDown,
+    getSpriteDragEnabled,
+    onSpriteDragStart,
+    onSpriteDragEnd,
   },
   ref,
 ) {
@@ -314,6 +345,11 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   const onSpineDragEndRef = useRef(onSpineDragEnd)
   const placeholderDetachRef = useRef(new Map<string, () => void>())
   const draggingSpineRef = useRef<Spine | null>(null)
+  const draggingSpriteRef = useRef<Sprite | null>(null)
+  const onSpriteCanvasPointerDownRef = useRef(onSpriteCanvasPointerDown)
+  const getSpriteDragEnabledRef = useRef(getSpriteDragEnabled)
+  const onSpriteDragStartRef = useRef(onSpriteDragStart)
+  const onSpriteDragEndRef = useRef(onSpriteDragEnd)
   const lastPointerClientRef = useRef({ cx: 0, cy: 0 })
   const tipApplyFromClientRef = useRef<(cx: number, cy: number) => void>(() => {})
   const [cursorWorldTip, setCursorWorldTip] = useState<{
@@ -333,6 +369,10 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   getSpineDragEnabledRef.current = getSpineDragEnabled
   onSpineDragStartRef.current = onSpineDragStart
   onSpineDragEndRef.current = onSpineDragEnd
+  onSpriteCanvasPointerDownRef.current = onSpriteCanvasPointerDown
+  getSpriteDragEnabledRef.current = getSpriteDragEnabled
+  onSpriteDragStartRef.current = onSpriteDragStart
+  onSpriteDragEndRef.current = onSpriteDragEnd
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -357,9 +397,16 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       }
 
       const spineDrag = draggingSpineRef.current
-      const placementMode = Boolean(spineDrag && !spineDrag.destroyed)
-      if (placementMode) {
-        spineOriginToWorldXY(spineDrag!, world, scratch)
+      const spriteDrag = draggingSpriteRef.current
+      const placementMode = Boolean(
+        (spineDrag && !spineDrag.destroyed) ||
+        (spriteDrag && !spriteDrag.destroyed),
+      )
+      if (placementMode && spineDrag && !spineDrag.destroyed) {
+        spineOriginToWorldXY(spineDrag, world, scratch)
+      } else if (placementMode && spriteDrag && !spriteDrag.destroyed) {
+        const g = spriteDrag.getGlobalPosition(scratch)
+        world.toLocal(g, undefined, scratch)
       } else {
         mapClientToWorldXY(application, world, cx, cy, scratch)
       }
@@ -390,13 +437,13 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     }
 
     const onWinMove = (e: PointerEvent) => {
-      if (!draggingSpineRef.current) return
+      if (!draggingSpineRef.current && !draggingSpriteRef.current) return
       pending = { cx: e.clientX, cy: e.clientY }
       if (!raf) raf = requestAnimationFrame(flush)
     }
 
     const onLeave = () => {
-      if (draggingSpineRef.current) return
+      if (draggingSpineRef.current || draggingSpriteRef.current) return
       pending = null
       if (raf) cancelAnimationFrame(raf)
       raf = 0
@@ -940,6 +987,82 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         }
       }
       if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    clearSprites() {
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!world) return
+      draggingSpriteRef.current = null
+      for (const child of [...world.children]) {
+        if (child instanceof Sprite) {
+          destroyPixiSprite(child)
+        }
+      }
+      if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    async addSprite(objectUrl: string): Promise<Sprite> {
+      const application = appRef.current
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!application || !world) throw new Error('Stage not ready')
+      const sprite = await createPixiSprite(objectUrl)
+      sprite.position.set(0, 0)
+      sprite.zIndex = 0
+      addSpriteToWorld(world, sprite)
+      attachSpriteDrag(sprite, application, world, {
+        onLeftPointerDown: () => onSpriteCanvasPointerDownRef.current?.(sprite),
+        isDragEnabled: () => getSpriteDragEnabledRef.current?.(sprite) ?? true,
+        onDragStart: (cx, cy) => {
+          draggingSpriteRef.current = sprite
+          tipApplyFromClientRef.current(cx, cy)
+          onSpriteDragStartRef.current?.()
+        },
+        onDragEnd: () => {
+          draggingSpriteRef.current = null
+          onSpriteDragEndRef.current?.()
+          const last = lastPointerClientRef.current
+          requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
+        },
+      })
+      if (overlay) bringOverlayToFront(world, overlay)
+      return sprite
+    },
+
+    removeSprite(sprite: Sprite, objectUrl?: string) {
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!world) return
+      if (sprite.destroyed) return
+      if (draggingSpriteRef.current === sprite) draggingSpriteRef.current = null
+      destroyPixiSprite(sprite, objectUrl)
+      if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    getSpriteWorldPosition(sprite: Sprite): { x: number; y: number } | null {
+      const world = worldRef.current
+      if (!world || sprite.destroyed) return null
+      const g = sprite.getGlobalPosition(new Point())
+      world.toLocal(g, undefined, g)
+      return { x: g.x, y: g.y }
+    },
+
+    setSpriteWorldPosition(sprite: Sprite, x: number, y: number): boolean {
+      const world = worldRef.current
+      if (!world || sprite.destroyed) return false
+      const s = snapWorldXY(x, y)
+      sprite.position.set(s.x, s.y)
+      return true
+    },
+
+    syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | Sprite }>) {
+      const n = order.length
+      for (let i = 0; i < n; i++) {
+        // order[0] = front = highest zIndex
+        const z = (n - 1 - i) * 10
+        order[i].obj.zIndex = z
+      }
     },
 
     removeSpine(spine: Spine) {

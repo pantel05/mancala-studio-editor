@@ -107,11 +107,19 @@ export async function readMancalaFile(file: File): Promise<OpenProjectResult> {
 function isValidProject(raw: unknown): raw is MancalaProject {
   if (!raw || typeof raw !== 'object') return false
   const o = raw as Record<string, unknown>
-  return (
-    typeof o.version === 'number' &&
-    o.app === 'MANCALA GAMING STUDIO EDITOR' &&
-    Array.isArray(o.objects)
-  )
+  if (
+    typeof o.version !== 'number' ||
+    o.app !== 'MANCALA GAMING STUDIO EDITOR' ||
+    !Array.isArray(o.objects)
+  ) return false
+  // Backfill optional new fields for older project files
+  if (!Array.isArray((o as Record<string, unknown>).sprites)) {
+    ;(o as Record<string, unknown>).sprites = []
+  }
+  if (!Array.isArray((o as Record<string, unknown>).layerOrder)) {
+    ;(o as Record<string, unknown>).layerOrder = (o.objects as { id: string }[]).map((obj) => obj.id)
+  }
+  return true
 }
 
 function guessMime(fileName: string): string {

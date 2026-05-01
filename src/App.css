@@ -2179,3 +2179,151 @@
   gap: 10px;
   flex-wrap: wrap;
 }
+
+/* ──────────────────────────────────────────────────────────
+   Hierarchy badge (IMG for sprite rows)
+────────────────────────────────────────────────────────── */
+
+.editor-hierarchy-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  line-height: 1.4;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.editor-hierarchy-badge--sprite {
+  background: rgba(86, 180, 233, 0.14);
+  border: 1px solid rgba(86, 180, 233, 0.35);
+  color: #56b4e9;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Sprite inspector controls
+────────────────────────────────────────────────────────── */
+
+.editor-inspector-pane .sprite-controls {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  gap: 0;
+}
+
+.sprite-controls {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 8px 10px;
+}
+
+.sprite-controls.is-canvas-drag-pick {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px rgba(86, 156, 214, 0.35);
+}
+
+.sprite-controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sprite-controls-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 12px;
+  color: #c8c8c8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sprite-controls-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #56b4e9;
+  background: rgba(86, 180, 233, 0.12);
+  border: 1px solid rgba(86, 180, 233, 0.3);
+  border-radius: 2px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+.sprite-controls-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sprite-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sprite-field-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.sprite-world-position-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sprite-world-position-values {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sprite-scale-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sprite-scale-values {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sprite-rotation-readout {
+  display: inline-flex;
+  align-items: center;
+  min-width: 70px;
+}
+
+.sprite-rotation-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sprite-source-info {
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sprite-source-name {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

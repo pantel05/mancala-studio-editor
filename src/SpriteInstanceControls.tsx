@@ -1,0 +1,585 @@
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from 'react'
+import type { PixiStageHandle } from './PixiStage'
+import type { SpriteRow } from './SpriteRow'
+import { snapWorldScalar } from './pixi/snapWorldPosition'
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+function parseCoord(raw: string): number | null {
+  const t = raw.trim().replace(/\s*(px|°|%)\s*$/i, '').replace(',', '.').trim()
+  if (t === '' || t === '-' || t === '—') return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Click-drag scrub for a single numeric axis.
+ * Same interaction model as the Spine inspector.
+ */
+function useAxisScrub(
+  disabled: boolean,
+  onBegin: () => { value: number; companion: number } | null,
+  onChange: (newValue: number, companion: number) => void,
+  onEditBegin: (() => void) | undefined,
+  onEditEnd: ((committed: boolean) => void) | undefined,
+  sensitivity = 1,
+) {
+  const scrubRef = useRef<{
+    startX: number
+    startValue: number
+    companion: number
+    active: boolean
+    pointerId: number
+  } | null>(null)
+  const [isScrubbing, setIsScrubbing] = useState(false)
+
+  const onBeginRef = useRef(onBegin)
+  const onChangeRef = useRef(onChange)
+  const onEditBeginRef = useRef(onEditBegin)
+  const onEditEndRef = useRef(onEditEnd)
+  onBeginRef.current = onBegin
+  onChangeRef.current = onChange
+  onEditBeginRef.current = onEditBegin
+  onEditEndRef.current = onEditEnd
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (disabled || e.button !== 0) return
+      const result = onBeginRef.current()
+      if (result === null) return
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      scrubRef.current = {
+        startX: e.clientX,
+        startValue: result.value,
+        companion: result.companion,
+        active: false,
+        pointerId: e.pointerId,
+      }
+    },
+    [disabled],
+  )
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const s = scrubRef.current
+      if (!s || e.pointerId !== s.pointerId) return
+      const delta = (e.clientX - s.startX) * sensitivity
+      if (!s.active && Math.abs(delta) < 3) return
+      if (!s.active) {
+        s.active = true
+        onEditBeginRef.current?.()
+        setIsScrubbing(true)
+        document.body.style.cursor = 'ew-resize'
+        document.body.style.userSelect = 'none'
+      }
+      onChangeRef.current(snapWorldScalar(s.startValue + delta), s.companion)
+    },
+    [sensitivity],
+  )
+
+  const endScrub = useCallback((committed: boolean) => {
+    const s = scrubRef.current
+    if (!s) return
+    scrubRef.current = null
+    if (s.active) {
+      onEditEndRef.current?.(committed)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setIsScrubbing(false)
+    }
+  }, [])
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (scrubRef.current?.pointerId !== e.pointerId) return
+      endScrub(true)
+    },
+    [endScrub],
+  )
+
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (scrubRef.current?.pointerId !== e.pointerId) return
+      endScrub(false)
+    },
+    [endScrub],
+  )
+
+  return { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, isScrubbing }
+}
+
+// ---------------------------------------------------------------------------
+// Live position readout (RAF loop while inspector is open)
+// ---------------------------------------------------------------------------
+
+function useLiveSpritePosition(
+  row: SpriteRow,
+  viewportStageRef: RefObject<PixiStageHandle | null> | undefined,
+  inspectorActive: boolean,
+  pauseLiveReadout: boolean,
+): { x: string; y: string } {
+  const [labels, setLabels] = useState({ x: '—', y: '—' })
+  const lastKeyRef = useRef('')
+
+  useEffect(() => {
+    if (!inspectorActive || !viewportStageRef || pauseLiveReadout) return
+    lastKeyRef.current = ''
+    let frameId = 0
+    let cancelled = false
+    const loop = () => {
+      if (cancelled) return
+      const pos = viewportStageRef.current?.getSpriteWorldPosition(row.sprite)
+      if (pos) {
+        const xs = pos.x.toFixed(1)
+        const ys = pos.y.toFixed(1)
+        const key = `${xs}\t${ys}`
+        if (key !== lastKeyRef.current) {
+          lastKeyRef.current = key
+          setLabels({ x: `${xs} px`, y: `${ys} px` })
+        }
+      }
+      if (!cancelled) frameId = requestAnimationFrame(loop)
+    }
+    frameId = requestAnimationFrame(loop)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frameId)
+    }
+  }, [inspectorActive, viewportStageRef, row.sprite, pauseLiveReadout])
+
+  return labels
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export function SpriteInstanceControls({
+  row,
+  viewportStageRef,
+  canvasDragPickActive,
+  onToggleCanvasDragPick,
+  inspectorActive = false,
+  onEditBegin,
+  onEditEnd,
+}: {
+  row: SpriteRow
+  viewportStageRef?: RefObject<PixiStageHandle | null>
+  canvasDragPickActive?: boolean
+  onToggleCanvasDragPick?: () => void
+  inspectorActive?: boolean
+  /** Capture snapshot before any property change (undo). */
+  onEditBegin?: () => void
+  /** After property change attempt. */
+  onEditEnd?: (committed: boolean) => void
+}) {
+  // ── Local state mirroring the Sprite properties ──────────────────────────
+  const [scaleX, setScaleX] = useState(() => row.sprite.scale.x)
+  const [scaleY, setScaleY] = useState(() => row.sprite.scale.y)
+  const [rotationDeg, setRotationDeg] = useState(() =>
+    Math.round((row.sprite.rotation * 180) / Math.PI * 10) / 10,
+  )
+  const [opacity, setOpacity] = useState(() => Math.round(row.sprite.alpha * 100))
+
+  // Reset local state when the selected row changes
+  useEffect(() => {
+    setScaleX(row.sprite.scale.x)
+    setScaleY(row.sprite.scale.y)
+    setRotationDeg(Math.round((row.sprite.rotation * 180) / Math.PI * 10) / 10)
+    setOpacity(Math.round(row.sprite.alpha * 100))
+  }, [row.id, row.sprite])
+
+  // Sync local state → Pixi Sprite
+  useEffect(() => { row.sprite.scale.x = scaleX }, [scaleX, row.sprite])
+  useEffect(() => { row.sprite.scale.y = scaleY }, [scaleY, row.sprite])
+  useEffect(() => { row.sprite.rotation = (rotationDeg * Math.PI) / 180 }, [rotationDeg, row.sprite])
+  useEffect(() => { row.sprite.alpha = opacity / 100 }, [opacity, row.sprite])
+
+  // ── World position edit state ─────────────────────────────────────────────
+  const [posEdit, setPosEdit] = useState<null | { axis: 'x' | 'y'; draft: string }>(null)
+  const posEditRef = useRef(posEdit)
+  posEditRef.current = posEdit
+  const posInputRef = useRef<HTMLInputElement | null>(null)
+  const skipPosBlurRef = useRef(false)
+
+  useEffect(() => { setPosEdit(null) }, [row.id])
+
+  const posLabels = useLiveSpritePosition(row, viewportStageRef, inspectorActive, Boolean(posEdit))
+
+  useLayoutEffect(() => {
+    if (!posEdit) return
+    const el = posInputRef.current
+    el?.focus()
+    el?.select()
+  }, [posEdit?.axis])
+
+  // ── Scrub handlers ────────────────────────────────────────────────────────
+  const disabled = row.locked
+
+  const posXScrub = useAxisScrub(
+    disabled,
+    () => {
+      const pos = viewportStageRef?.current?.getSpriteWorldPosition(row.sprite)
+      return pos ? { value: pos.x, companion: pos.y } : null
+    },
+    (newX, frozenY) => { viewportStageRef?.current?.setSpriteWorldPosition(row.sprite, newX, frozenY) },
+    onEditBegin,
+    onEditEnd,
+  )
+
+  const posYScrub = useAxisScrub(
+    disabled,
+    () => {
+      const pos = viewportStageRef?.current?.getSpriteWorldPosition(row.sprite)
+      return pos ? { value: pos.y, companion: pos.x } : null
+    },
+    (newY, frozenX) => { viewportStageRef?.current?.setSpriteWorldPosition(row.sprite, frozenX, newY) },
+    onEditBegin,
+    onEditEnd,
+  )
+
+  const scaleXScrub = useAxisScrub(
+    disabled,
+    () => ({ value: row.sprite.scale.x, companion: row.sprite.scale.y }),
+    (newVal) => { onEditBegin?.(); setScaleX(Math.max(0.01, newVal)); onEditEnd?.(true) },
+    undefined,
+    undefined,
+    0.01,
+  )
+
+  const scaleYScrub = useAxisScrub(
+    disabled,
+    () => ({ value: row.sprite.scale.y, companion: row.sprite.scale.x }),
+    (newVal) => { onEditBegin?.(); setScaleY(Math.max(0.01, newVal)); onEditEnd?.(true) },
+    undefined,
+    undefined,
+    0.01,
+  )
+
+  const rotScrub = useAxisScrub(
+    disabled,
+    () => ({ value: rotationDeg, companion: 0 }),
+    (newVal) => { onEditBegin?.(); setRotationDeg(newVal); onEditEnd?.(true) },
+    undefined,
+    undefined,
+    1,
+  )
+
+  // ── Position double-click edit ─────────────────────────────────────────────
+  const beginEditPosAxis = useCallback(
+    (axis: 'x' | 'y') => {
+      if (disabled) return
+      const pos = viewportStageRef?.current?.getSpriteWorldPosition(row.sprite)
+      if (!pos) return
+      setPosEdit({ axis, draft: (axis === 'x' ? pos.x : pos.y).toFixed(1) })
+    },
+    [disabled, viewportStageRef, row.sprite],
+  )
+
+  const commitPosEdit = useCallback(() => {
+    const cur = posEditRef.current
+    if (!cur) return
+    const stage = viewportStageRef?.current
+    const pos = stage?.getSpriteWorldPosition(row.sprite)
+    if (!stage || !pos) { setPosEdit(null); return }
+    const v = parseCoord(cur.draft)
+    if (v === null) { setPosEdit(null); return }
+    const nx = cur.axis === 'x' ? v : pos.x
+    const ny = cur.axis === 'y' ? v : pos.y
+    onEditBegin?.()
+    const ok = stage.setSpriteWorldPosition(row.sprite, nx, ny)
+    onEditEnd?.(ok)
+    setPosEdit(null)
+  }, [viewportStageRef, row.sprite, onEditBegin, onEditEnd])
+
+  const onPosKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') { e.preventDefault(); skipPosBlurRef.current = true; commitPosEdit() }
+      else if (e.key === 'Escape') { e.preventDefault(); skipPosBlurRef.current = true; setPosEdit(null) }
+    },
+    [commitPosEdit],
+  )
+
+  const onPosBlur = useCallback(() => {
+    if (skipPosBlurRef.current) { skipPosBlurRef.current = false; return }
+    commitPosEdit()
+  }, [commitPosEdit])
+
+  // ── Inline edit helpers for Scale X/Y and Rotation ────────────────────────
+  const [scaleXEdit, setScaleXEdit] = useState<string | null>(null)
+  const [scaleYEdit, setScaleYEdit] = useState<string | null>(null)
+  const [rotEdit, setRotEdit] = useState<string | null>(null)
+
+  useEffect(() => { setScaleXEdit(null); setScaleYEdit(null); setRotEdit(null) }, [row.id])
+
+  const scaleXInputRef = useRef<HTMLInputElement | null>(null)
+  const scaleYInputRef = useRef<HTMLInputElement | null>(null)
+  const rotInputRef = useRef<HTMLInputElement | null>(null)
+  const skipScaleXBlur = useRef(false)
+  const skipScaleYBlur = useRef(false)
+  const skipRotBlur = useRef(false)
+
+  useLayoutEffect(() => { if (scaleXEdit !== null) { scaleXInputRef.current?.focus(); scaleXInputRef.current?.select() } }, [scaleXEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { if (scaleYEdit !== null) { scaleYInputRef.current?.focus(); scaleYInputRef.current?.select() } }, [scaleYEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { if (rotEdit !== null) { rotInputRef.current?.focus(); rotInputRef.current?.select() } }, [rotEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitScaleX = useCallback(() => {
+    if (scaleXEdit === null) return
+    const v = parseCoord(scaleXEdit)
+    if (v !== null) { onEditBegin?.(); setScaleX(Math.max(0.01, v)); onEditEnd?.(true) }
+    setScaleXEdit(null)
+  }, [scaleXEdit, onEditBegin, onEditEnd])
+
+  const commitScaleY = useCallback(() => {
+    if (scaleYEdit === null) return
+    const v = parseCoord(scaleYEdit)
+    if (v !== null) { onEditBegin?.(); setScaleY(Math.max(0.01, v)); onEditEnd?.(true) }
+    setScaleYEdit(null)
+  }, [scaleYEdit, onEditBegin, onEditEnd])
+
+  const commitRot = useCallback(() => {
+    if (rotEdit === null) return
+    const v = parseCoord(rotEdit)
+    if (v !== null) { onEditBegin?.(); setRotationDeg(v); onEditEnd?.(true) }
+    setRotEdit(null)
+  }, [rotEdit, onEditBegin, onEditEnd])
+
+  const onPanelPointerDownCapture = useCallback(
+    (e: { button: number; target: EventTarget | null }) => {
+      if (e.button !== 0 || !onToggleCanvasDragPick) return
+      const target = e.target
+      if (target instanceof Element && target.closest('button, input, select, textarea, .sprite-field')) return
+      onToggleCanvasDragPick()
+    },
+    [onToggleCanvasDragPick],
+  )
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const posReadoutTitle = disabled
+    ? 'Unavailable while locked.'
+    : 'Scene units (same as grid). Drag to scrub · Double-click to type. Snaps to 0.5 px.'
+
+  return (
+    <div
+      className={`sprite-controls${canvasDragPickActive ? ' is-canvas-drag-pick' : ''}`}
+      data-sprite-id={row.id}
+      onPointerDownCapture={onPanelPointerDownCapture}
+    >
+      {/* Header */}
+      <div className="sprite-controls-head">
+        <span className="sprite-controls-title">{row.displayName}</span>
+        <span className="sprite-controls-badge">Image</span>
+      </div>
+
+      <div className="sprite-controls-body">
+        {/* World Position */}
+        <div className="sprite-field sprite-world-position-field">
+          <span className="sprite-field-label">World position</span>
+          <div className="sprite-world-position-values" aria-live="polite" title={posReadoutTitle}>
+            {posEdit?.axis === 'x' ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">X</span>
+                <input
+                  ref={posInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={posEdit.draft}
+                  onChange={(e) => setPosEdit((w) => w && w.axis === 'x' ? { ...w, draft: e.target.value } : w)}
+                  onBlur={onPosBlur}
+                  onKeyDown={onPosKeyDown}
+                  aria-label="World position X"
+                />
+                <span className="spine-world-position-unit"> px</span>
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => beginEditPosAxis('x')}
+                onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); beginEditPosAxis('x') } }}
+                onPointerDown={posXScrub.handlePointerDown}
+                onPointerMove={posXScrub.handlePointerMove}
+                onPointerUp={posXScrub.handlePointerUp}
+                onPointerCancel={posXScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                X {posLabels.x}
+              </span>
+            )}
+            {posEdit?.axis === 'y' ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">Y</span>
+                <input
+                  ref={posInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={posEdit.draft}
+                  onChange={(e) => setPosEdit((w) => w && w.axis === 'y' ? { ...w, draft: e.target.value } : w)}
+                  onBlur={onPosBlur}
+                  onKeyDown={onPosKeyDown}
+                  aria-label="World position Y"
+                />
+                <span className="spine-world-position-unit"> px</span>
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => beginEditPosAxis('y')}
+                onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); beginEditPosAxis('y') } }}
+                onPointerDown={posYScrub.handlePointerDown}
+                onPointerMove={posYScrub.handlePointerMove}
+                onPointerUp={posYScrub.handlePointerUp}
+                onPointerCancel={posYScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                Y {posLabels.y}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Scale X/Y */}
+        <div className="sprite-field sprite-scale-field">
+          <span className="sprite-field-label">Scale</span>
+          <div className="sprite-scale-values">
+            {/* Scale X */}
+            {scaleXEdit !== null ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">X</span>
+                <input
+                  ref={scaleXInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={scaleXEdit}
+                  onChange={(e) => setScaleXEdit(e.target.value)}
+                  onBlur={() => { if (skipScaleXBlur.current) { skipScaleXBlur.current = false; return } commitScaleX() }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); skipScaleXBlur.current = true; commitScaleX() } else if (e.key === 'Escape') { e.preventDefault(); skipScaleXBlur.current = true; setScaleXEdit(null) } }}
+                />
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => !disabled && setScaleXEdit(scaleX.toFixed(3))}
+                onPointerDown={scaleXScrub.handlePointerDown}
+                onPointerMove={scaleXScrub.handlePointerMove}
+                onPointerUp={scaleXScrub.handlePointerUp}
+                onPointerCancel={scaleXScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                X {scaleX.toFixed(3)}
+              </span>
+            )}
+            {/* Scale Y */}
+            {scaleYEdit !== null ? (
+              <label className="spine-world-position-edit">
+                <span className="spine-world-position-axis-label">Y</span>
+                <input
+                  ref={scaleYInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  className="spine-world-position-input"
+                  value={scaleYEdit}
+                  onChange={(e) => setScaleYEdit(e.target.value)}
+                  onBlur={() => { if (skipScaleYBlur.current) { skipScaleYBlur.current = false; return } commitScaleY() }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); skipScaleYBlur.current = true; commitScaleY() } else if (e.key === 'Escape') { e.preventDefault(); skipScaleYBlur.current = true; setScaleYEdit(null) } }}
+                />
+              </label>
+            ) : (
+              <span
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                className="spine-world-position-readout"
+                onDoubleClick={() => !disabled && setScaleYEdit(scaleY.toFixed(3))}
+                onPointerDown={scaleYScrub.handlePointerDown}
+                onPointerMove={scaleYScrub.handlePointerMove}
+                onPointerUp={scaleYScrub.handlePointerUp}
+                onPointerCancel={scaleYScrub.handlePointerCancel}
+                title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+              >
+                Y {scaleY.toFixed(3)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Rotation */}
+        <div className="sprite-field">
+          <span className="sprite-field-label">Rotation</span>
+          {rotEdit !== null ? (
+            <label className="spine-world-position-edit sprite-rotation-edit">
+              <input
+                ref={rotInputRef}
+                type="text"
+                inputMode="decimal"
+                className="spine-world-position-input"
+                value={rotEdit}
+                onChange={(e) => setRotEdit(e.target.value)}
+                onBlur={() => { if (skipRotBlur.current) { skipRotBlur.current = false; return } commitRot() }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); skipRotBlur.current = true; commitRot() } else if (e.key === 'Escape') { e.preventDefault(); skipRotBlur.current = true; setRotEdit(null) } }}
+                aria-label="Rotation in degrees"
+              />
+              <span className="spine-world-position-unit">°</span>
+            </label>
+          ) : (
+            <span
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              className="spine-world-position-readout sprite-rotation-readout"
+              onDoubleClick={() => !disabled && setRotEdit(rotationDeg.toFixed(1))}
+              onPointerDown={rotScrub.handlePointerDown}
+              onPointerMove={rotScrub.handlePointerMove}
+              onPointerUp={rotScrub.handlePointerUp}
+              onPointerCancel={rotScrub.handlePointerCancel}
+              title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+            >
+              {rotationDeg.toFixed(1)}°
+            </span>
+          )}
+        </div>
+
+        {/* Opacity */}
+        <label className="sprite-field">
+          <span className="sprite-field-label">Opacity {opacity}%</span>
+          <input
+            type="range"
+            className="spine-range"
+            min={0}
+            max={100}
+            step={1}
+            value={opacity}
+            disabled={disabled}
+            onChange={(e) => {
+              onEditBegin?.()
+              setOpacity(Number(e.target.value))
+              onEditEnd?.(true)
+            }}
+          />
+        </label>
+
+        {/* Image info */}
+        <div className="sprite-field sprite-source-info">
+          <span className="sprite-field-label">Source</span>
+          <span className="sprite-source-name" title={row.sourceFile.name}>{row.sourceFile.name}</span>
+        </div>
+      </div>
+    </div>
+  )
+}

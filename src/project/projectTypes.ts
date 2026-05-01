@@ -44,6 +44,25 @@ export type ProjectObject = {
   placeholderPolicyIgnored: boolean
 }
 
+/** One sprite (static image) object inside the project file. */
+export type SpriteObject = {
+  /** Stable ID used to resolve placeholder bindings within this file. */
+  id: string
+  displayName: string
+  /** Filename of the source image (e.g. "background.png"). Used to locate the asset in the ZIP. */
+  imageFile: string
+  /** World position of the sprite centre. */
+  position: { x: number; y: number }
+  scaleX: number
+  scaleY: number
+  /** Rotation in radians. */
+  rotation: number
+  /** Alpha 0-1. */
+  alpha: number
+  layerVisible: boolean
+  locked: boolean
+}
+
 /** Viewport / scene-level settings stored in the project. */
 export type ProjectViewport = {
   backdropMode: string
@@ -58,4 +77,12 @@ export type MancalaProject = {
   viewport: ProjectViewport
   /** Ordered array — first entry is drawn in front (top of hierarchy). */
   objects: ProjectObject[]
+  /** Static image sprites in the scene. */
+  sprites: SpriteObject[]
+  /**
+   * Unified front-to-back draw order: IDs from both `objects` and `sprites`.
+   * First ID = drawn in front (top of hierarchy).
+   * When absent (older files), falls back to the order of `objects`.
+   */
+  layerOrder: string[]
 }

@@ -18,6 +18,9 @@ import {
   type SpineControlRow,
   type SpineInstanceHandle,
 } from './SpineInstanceControls'
+import { SpriteInstanceControls } from './SpriteInstanceControls'
+import type { SpriteRow } from './SpriteRow'
+import { isImageFile } from './pixi/spriteLayer'
 import {
   groupsLoadableFromReport,
   mergeSpineValidationIssues,
@@ -305,6 +308,17 @@ function App() {
     spineRowsRef.current = spineRows
   }, [spineRows])
 
+  const [spriteRows, setSpriteRows] = useState<SpriteRow[]>([])
+  const spriteRowsRef = useRef(spriteRows)
+  useEffect(() => {
+    spriteRowsRef.current = spriteRows
+  }, [spriteRows])
+
+  /** Ordered IDs (front-to-back) for the unified hierarchy and z-order. */
+  const [layerOrder, setLayerOrder] = useState<string[]>([])
+  /** Selected sprite ID — mutually exclusive with the spine selection. */
+  const [selectedSpriteId, setSelectedSpriteId] = useState<string | null>(null)
+
   const undoStackRef = useRef<SceneSnapshot[]>([])
   const redoStackRef = useRef<SceneSnapshot[]>([])
   const [historyTick, setHistoryTick] = useState(0)
@@ -415,10 +429,18 @@ function App() {
     setCanvasDragSpineId((prev) => (prev === id ? null : id))
   }, [])
 
-  /** Hierarchy click: inspector selection + canvas pick so the skeleton can be dragged on the stage immediately. */
+  /** Hierarchy click: inspector selection + canvas pick so the object can be dragged on the stage immediately. */
   const selectFromHierarchy = useCallback((id: string) => {
-    setSelectedSpineId(id)
-    setCanvasDragSpineId(id)
+    const isSpine = spineRowsRef.current.some((r) => r.id === id)
+    if (isSpine) {
+      setSelectedSpineId(id)
+      setSelectedSpriteId(null)
+      setCanvasDragSpineId(id)
+    } else {
+      setSelectedSpriteId(id)
+      setSelectedSpineId(null)
+      setCanvasDragSpineId(null)
+    }
   }, [])
 
   const selectSpineFromCanvas = useCallback(
@@ -426,15 +448,45 @@ function App() {
       const row = spineRows.find((r) => r.spine === spine)
       if (!row) return
       setSelectedSpineId(row.id)
+      setSelectedSpriteId(null)
       setCanvasDragSpineId(row.id)
     },
     [spineRows],
+  )
+
+  const selectSpriteFromCanvas = useCallback(
+    (sprite: import('pixi.js').Sprite) => {
+      const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
+      if (!row) return
+      setSelectedSpriteId(row.id)
+      setSelectedSpineId(null)
+      setCanvasDragSpineId(null)
+    },
+    [],
   )
 
   const getSpineDragEnabled = useCallback((spine: Spine) => {
     const row = spineRows.find((r) => r.spine === spine)
     return row ? !row.locked && (!row.placeholderPolicyFrozen || row.placeholderPolicyIgnored) : true
   }, [spineRows])
+
+  const getSpriteDragEnabled = useCallback(
+    (sprite: import('pixi.js').Sprite) => {
+      const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
+      return row ? !row.locked : true
+    },
+    [],
+  )
+
+  const dragSpriteBeforeRef = useRef<number>(0)
+
+  const onSpriteDragStartForHistory = useCallback(() => {
+    dragSpriteBeforeRef.current = historyTick
+  }, [historyTick])
+
+  const onSpriteDragEndForHistory = useCallback(() => {
+    setHistoryTick((t) => t + 1)
+  }, [])
 
   useEffect(() => {
     for (const row of spineRows) {
@@ -444,12 +496,18 @@ function App() {
     }
   }, [spineRows])
 
+  useEffect(() => {
+    for (const row of spriteRows) {
+      row.sprite.visible = row.layerVisible
+      row.sprite.cursor = row.locked ? 'default' : 'grab'
+    }
+  }, [spriteRows])
+
   const toggleRowLocked = useCallback(
     (id: string) => {
       pushUndoSnapshot()
-      setSpineRows((rows) =>
-        rows.map((r) => (r.id === id ? { ...r, locked: !r.locked } : r)),
-      )
+      setSpineRows((rows) => rows.map((r) => (r.id === id ? { ...r, locked: !r.locked } : r)))
+      setSpriteRows((rows) => rows.map((r) => (r.id === id ? { ...r, locked: !r.locked } : r)))
     },
     [pushUndoSnapshot],
   )
@@ -457,9 +515,8 @@ function App() {
   const toggleRowLayerVisible = useCallback(
     (id: string) => {
       pushUndoSnapshot()
-      setSpineRows((rows) =>
-        rows.map((r) => (r.id === id ? { ...r, layerVisible: !r.layerVisible } : r)),
-      )
+      setSpineRows((rows) => rows.map((r) => (r.id === id ? { ...r, layerVisible: !r.layerVisible } : r)))
+      setSpriteRows((rows) => rows.map((r) => (r.id === id ? { ...r, layerVisible: !r.layerVisible } : r)))
     },
     [pushUndoSnapshot],
   )
@@ -472,13 +529,23 @@ function App() {
       return
     }
     setSelectedSpineId((prev) =>
-      prev !== null && spineRows.some((r) => r.id === prev) ? prev : spineRows[0].id,
+      prev !== null && spineRows.some((r) => r.id === prev) ? prev : null,
     )
   }, [spineRows])
+
+  useEffect(() => {
+    if (!selectedSpriteId) return
+    if (!spriteRows.some((r) => r.id === selectedSpriteId)) setSelectedSpriteId(null)
+  }, [selectedSpriteId, spriteRows])
 
   const selectedRow = useMemo(
     () => spineRows.find((r) => r.id === selectedSpineId) ?? null,
     [spineRows, selectedSpineId],
+  )
+
+  const selectedSpriteRow = useMemo(
+    () => spriteRows.find((r) => r.id === selectedSpriteId) ?? null,
+    [spriteRows, selectedSpriteId],
   )
 
   const atlas1xAvailable = useMemo(
@@ -494,10 +561,18 @@ function App() {
   const [hierarchyDragId, setHierarchyDragId] = useState<string | null>(null)
   const [hierarchyDragOverId, setHierarchyDragOverId] = useState<string | null>(null)
 
+  // Sync z-order for all objects (spines + sprites) based on unified layerOrder.
   useEffect(() => {
-    if (spineRows.length === 0) return
-    stageRef.current?.syncHierarchyDrawOrder(spineRows.map((r) => r.spine))
-  }, [spineRows])
+    type LayerEntry = { kind: 'spine' | 'sprite'; obj: Spine | import('pixi.js').Sprite }
+    const order: LayerEntry[] = []
+    for (const id of layerOrder) {
+      const spine = spineRows.find((r) => r.id === id)
+      if (spine) { order.push({ kind: 'spine', obj: spine.spine }); continue }
+      const sprite = spriteRows.find((r) => r.id === id)
+      if (sprite) { order.push({ kind: 'sprite', obj: sprite.sprite }); continue }
+    }
+    if (order.length > 0) stageRef.current?.syncFullLayerOrder(order)
+  }, [layerOrder, spineRows, spriteRows])
 
   useEffect(() => {
     stageRef.current?.reconcilePlaceholderAttachments(
@@ -519,11 +594,11 @@ function App() {
   const moveHierarchyRowBeforeTarget = useCallback((sourceId: string, targetId: string) => {
     if (sourceId === targetId) return
     pushUndoSnapshot()
-    setSpineRows((rows) => {
-      const from = rows.findIndex((r) => r.id === sourceId)
-      const to = rows.findIndex((r) => r.id === targetId)
-      if (from < 0 || to < 0) return rows
-      const next = [...rows]
+    setLayerOrder((order) => {
+      const from = order.indexOf(sourceId)
+      const to = order.indexOf(targetId)
+      if (from < 0 || to < 0) return order
+      const next = [...order]
       const [item] = next.splice(from, 1)
       let insertAt = to
       if (from < to) insertAt = to - 1
@@ -594,6 +669,86 @@ function App() {
 
   const runLoad = useCallback(async (files: File[]) => {
     if (files.length === 0) return
+
+    // Split: standalone images (not consumed by atlas grouping) → sprites; rest → spine pipeline.
+    // We first run groupSpineFiles logic to claim texture pages, then treat leftover images as sprites.
+    // For now, any image file that is NOT part of a spine atlas group is treated as a sprite.
+    // The simplest heuristic: image files are potential sprites; we pass ALL files to the spine
+    // pipeline (which ignores images it doesn't need) and ALSO create sprites for pure image drops.
+    const imageFiles = files.filter(isImageFile)
+    const nonImageFiles = files.filter((f) => !isImageFile(f))
+
+    // Create sprite objects from standalone image files dropped directly.
+    // (Images that are spine texture pages will also be in importedFilesRef but won't create sprites
+    // because they have corresponding atlas files in the same drop.)
+    const hasSpineFiles = nonImageFiles.some(
+      (f) => f.name.toLowerCase().endsWith('.skel') || f.name.toLowerCase().endsWith('.json') || f.name.toLowerCase().endsWith('.atlas'),
+    )
+
+    // If ONLY images were dropped (no spine files), treat them as sprite imports.
+    if (imageFiles.length > 0 && nonImageFiles.length === 0) {
+      for (const imgFile of imageFiles) {
+        const objectUrl = URL.createObjectURL(imgFile)
+        try {
+          const sprite = await stageRef.current?.addSprite(objectUrl)
+          if (!sprite) { URL.revokeObjectURL(objectUrl); continue }
+          const id = crypto.randomUUID()
+          const row: SpriteRow = {
+            id,
+            kind: 'sprite',
+            displayName: imgFile.name.replace(/\.[^.]+$/, ''),
+            sourceFile: imgFile,
+            objectUrl,
+            sprite,
+            locked: false,
+            layerVisible: true,
+          }
+          setSpriteRows((prev) => [...prev, row])
+          setLayerOrder((prev) => [id, ...prev])
+          setHistoryTick((t) => t + 1)
+        } catch {
+          URL.revokeObjectURL(objectUrl)
+        }
+      }
+      return
+    }
+
+    // Mixed drop (spine files + possibly images): add images as sprites, pass all files to spine pipeline.
+    if (imageFiles.length > 0 && hasSpineFiles) {
+      for (const imgFile of imageFiles) {
+        // Only create a sprite if this image file doesn't share a basename with an atlas file in the same drop
+        // (i.e. it's not a texture page). We check by seeing if any .atlas file in the drop references this name.
+        const isTexturePageCandidate = nonImageFiles.some(
+          (f) => f.name.toLowerCase().endsWith('.atlas'),
+        )
+        if (isTexturePageCandidate) continue // Let the spine pipeline consume texture pages
+        const objectUrl = URL.createObjectURL(imgFile)
+        try {
+          const sprite = await stageRef.current?.addSprite(objectUrl)
+          if (!sprite) { URL.revokeObjectURL(objectUrl); continue }
+          const id = crypto.randomUUID()
+          const row: SpriteRow = {
+            id,
+            kind: 'sprite',
+            displayName: imgFile.name.replace(/\.[^.]+$/, ''),
+            sourceFile: imgFile,
+            objectUrl,
+            sprite,
+            locked: false,
+            layerVisible: true,
+          }
+          setSpriteRows((prev) => [...prev, row])
+          setLayerOrder((prev) => [id, ...prev])
+          setHistoryTick((t) => t + 1)
+        } catch {
+          URL.revokeObjectURL(objectUrl)
+        }
+      }
+    }
+
+    // If only images and no spine files, we already returned above.
+    if (nonImageFiles.length === 0) return
+
     importedFilesRef.current = mergeImportedFilePool(importedFilesRef.current, files)
     setBusy(true)
     setOutcome(null)
@@ -693,6 +848,7 @@ function App() {
           )
         }
         setSpineRows((prev) => [...prev, ...newRows])
+        setLayerOrder((prev) => [...newRows.map((r) => r.id), ...prev])
         if (promptEntries.length > 0) {
           setPendingUnknownAnims(promptEntries)
         }
@@ -1075,10 +1231,25 @@ function App() {
       stageRef.current?.removeSpine(row.spine)
       spineHandleById.current.delete(rowId)
       setSpineRows(nextRows)
-      setSelectedSpineId((sel) => (sel === rowId ? (nextRows[0]?.id ?? null) : sel))
+      setLayerOrder((prev) => prev.filter((id) => id !== rowId))
+      setSelectedSpineId((sel) => (sel === rowId ? null : sel))
       setCanvasDragSpineId((id) => (id === rowId ? null : id))
     },
     [busy],
+  )
+
+  const removeSpriteFromProject = useCallback(
+    (rowId: string) => {
+      if (busy) return
+      const row = spriteRowsRef.current.find((r) => r.id === rowId)
+      if (!row) return
+      stageRef.current?.removeSprite(row.sprite, row.objectUrl)
+      setSpriteRows((prev) => prev.filter((r) => r.id !== rowId))
+      setLayerOrder((prev) => prev.filter((id) => id !== rowId))
+      setSelectedSpriteId((sel) => (sel === rowId ? null : sel))
+      pushUndoSnapshot()
+    },
+    [busy, pushUndoSnapshot],
   )
 
   const closeRemoveSpineDialog = useCallback(() => {
@@ -1109,14 +1280,23 @@ function App() {
     importedFilesRef.current = []
     setAtlasSessionTag(null)
     stageRef.current?.clearSpines()
+    // Destroy sprites — revoke objectUrls
+    const spritesToClear = spriteRowsRef.current
+    for (const row of spritesToClear) {
+      stageRef.current?.removeSprite(row.sprite, row.objectUrl)
+      URL.revokeObjectURL(row.objectUrl)
+    }
     stageRef.current?.resetStageView()
     spineHandleById.current.clear()
     setOutcome(null)
     setValidationReport(null)
     setSpineRows([])
+    setSpriteRows([])
+    setLayerOrder([])
     setStageScale(1)
     setCanvasDragSpineId(null)
     setSelectedSpineId(null)
+    setSelectedSpriteId(null)
     setOpenTitlebarMenu(null)
     projectFileHandleRef.current = null
     undoStackRef.current = []
@@ -1138,17 +1318,19 @@ function App() {
   // The historyTick value at the point of the last save / open / clear.
   // isDirty is derived: scene is dirty when the tick has moved on and there's content.
   const [lastSavedTick, setLastSavedTick] = useState(0)
-  const isDirty = spineRows.length > 0 && historyTick !== lastSavedTick
+  const isDirty = (spineRows.length > 0 || spriteRows.length > 0) && historyTick !== lastSavedTick
 
   const buildSaveInput = useCallback(() => ({
     rows: spineRows,
+    spriteRows,
     importedFiles: importedFilesRef.current,
     backdropMode,
     safeFramePreset,
-  }), [spineRows, backdropMode, safeFramePreset])
+    layerOrder,
+  }), [spineRows, spriteRows, layerOrder, backdropMode, safeFramePreset])
 
   const onSaveProject = useCallback(async () => {
-    if (spineRows.length === 0) {
+    if (spineRows.length === 0 && spriteRows.length === 0) {
       setProjectError('Nothing to save — add some objects to the scene first.')
       return
     }
@@ -1167,7 +1349,7 @@ function App() {
   }, [spineRows, buildSaveInput, historyTick])
 
   const onSaveProjectAs = useCallback(async () => {
-    if (spineRows.length === 0) {
+    if (spineRows.length === 0 && spriteRows.length === 0) {
       setProjectError('Nothing to save — add some objects to the scene first.')
       return
     }
@@ -1250,6 +1432,8 @@ function App() {
       unknownAnimationNames: [] as string[],
     }))
     setSpineRows(newRows)
+    // Initialise layerOrder with spine rows — will be overwritten when sprites are restored below
+    setLayerOrder(newRows.map((r) => r.id))
 
     const projectIdToRowId = applyProjectStateToRows(project, newRows)
 
@@ -1279,6 +1463,55 @@ function App() {
         }
       }),
     )
+
+    // Restore sprites
+    const restoredSpriteRows: SpriteRow[] = []
+    const imageFileByName = new Map(assetFiles.map((f) => [f.name.toLowerCase(), f]))
+    for (const saved of project.sprites ?? []) {
+      const srcFile = imageFileByName.get(saved.imageFile.toLowerCase())
+      if (!srcFile) continue
+      const objectUrl = URL.createObjectURL(srcFile)
+      try {
+        const sprite = await stageRef.current?.addSprite(objectUrl)
+        if (!sprite) { URL.revokeObjectURL(objectUrl); continue }
+        sprite.position.set(saved.position.x, saved.position.y)
+        sprite.scale.set(saved.scaleX, saved.scaleY)
+        sprite.rotation = saved.rotation
+        sprite.alpha = saved.alpha
+        sprite.visible = saved.layerVisible
+        // Use the saved id as the row id for layerOrder restoration
+        restoredSpriteRows.push({
+          id: saved.id,
+          kind: 'sprite',
+          displayName: saved.displayName,
+          sourceFile: srcFile,
+          objectUrl,
+          sprite,
+          locked: saved.locked,
+          layerVisible: saved.layerVisible,
+        })
+      } catch {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+    setSpriteRows(restoredSpriteRows)
+
+    // Restore unified layer order — map saved IDs to current row IDs
+    // Spine rows use their own IDs (set by applyProjectStateToRows via projectIdToRowId)
+    // Sprite rows use saved IDs directly (we preserved them above)
+    const savedLayerOrder: string[] = project.layerOrder ?? [
+      ...project.objects.map((o) => o.id),
+      ...(project.sprites ?? []).map((s) => s.id),
+    ]
+    const resolvedLayerOrder: string[] = savedLayerOrder.flatMap((savedId) => {
+      // Try spine: projectIdToRowId maps saved id → live row id
+      const liveSpineId = projectIdToRowId.get(savedId)
+      if (liveSpineId) return [liveSpineId]
+      // Try sprite: we kept the saved id
+      if (restoredSpriteRows.some((r) => r.id === savedId)) return [savedId]
+      return []
+    })
+    setLayerOrder(resolvedLayerOrder)
 
     setBusy(false)
     setProjectBusy(false)
@@ -1366,8 +1599,9 @@ function App() {
     )
   }, [])
 
-  const canUndo = spineRows.length > 0 && undoStackRef.current.length > 0
-  const canRedo = spineRows.length > 0 && redoStackRef.current.length > 0
+  const hasSceneObjects = spineRows.length > 0 || spriteRows.length > 0
+  const canUndo = hasSceneObjects && undoStackRef.current.length > 0
+  const canRedo = hasSceneObjects && redoStackRef.current.length > 0
 
   return (
     <div className="editor-root">
@@ -1443,7 +1677,7 @@ function App() {
                       type="button"
                       className="btn btn-primary"
                       onClick={onSaveProject}
-                      disabled={busy || projectBusy || spineRows.length === 0}
+                      disabled={busy || projectBusy || (spineRows.length === 0 && spriteRows.length === 0)}
                       title={projectFileHandleRef.current ? 'Overwrite the current project file (no dialog)' : 'Save to a .mancala file — choose location'}
                     >
                       {projectBusy ? 'Saving…' : (projectFileHandleRef.current ? 'Save' : 'Save…')}
@@ -1452,7 +1686,7 @@ function App() {
                       type="button"
                       className="btn"
                       onClick={onSaveProjectAs}
-                      disabled={busy || projectBusy || spineRows.length === 0}
+                      disabled={busy || projectBusy || (spineRows.length === 0 && spriteRows.length === 0)}
                       title="Save to a new .mancala file — always shows the Save dialog"
                     >
                       Save As…
@@ -1543,7 +1777,7 @@ function App() {
           </div>
         </div>
         <div className="editor-titlebar-center">
-          {spineRows.length > 0 && (
+          {(spineRows.length > 0 || spriteRows.length > 0) && (
             <div className="editor-transport" role="group" aria-label="Scene transport">
               <button
                 type="button"
@@ -1588,113 +1822,106 @@ function App() {
       <div className="editor-body" style={{ gridTemplateColumns: bodyGridTemplate }}>
         <aside className="editor-sidebar" aria-label="Hierarchy">
           <div className="editor-sidebar-inner">
-            {spineRows.length > 0 ? (
+            {layerOrder.length > 0 ? (
               <div className="editor-panel-section editor-panel-section--hierarchy-grow">
                 <div className="editor-panel-title">Hierarchy</div>
                 <div className="editor-panel-content editor-panel-content--hierarchy">
                   <p className="editor-hierarchy-help">
                     Top = drawn in front. Drag a row onto another to reorder. Dot = scene visibility; padlock = lock
-                    position; trash on the right removes from scene (confirmation).
+                    position; trash on the right removes from scene.
                   </p>
                   <div className="editor-hierarchy-scroll">
-                    <div className="editor-hierarchy" role="tree" aria-label="Spine objects in scene">
-                      {spineRows.map((row) => (
-                        <div
-                          key={row.id}
-                          className={`editor-hierarchy-row${row.id === selectedSpineId ? ' is-selected' : ''}${row.id === hierarchyDragId ? ' is-hierarchy-dragging' : ''}${row.id === hierarchyDragOverId ? ' is-hierarchy-drop-target' : ''}`}
-                          onDragOver={(e) => {
-                            e.preventDefault()
-                            e.dataTransfer.dropEffect = 'move'
-                            setHierarchyDragOverId(row.id)
-                          }}
-                          onDrop={(e) => onHierarchyDropOnItem(e, row.id)}
-                        >
-                          <button
-                            type="button"
-                            className="editor-hierarchy-visibility"
-                            title={row.layerVisible ? 'Visible in scene (click to hide)' : 'Hidden in scene (click to show)'}
-                            aria-label={
-                              row.layerVisible ? 'Hide skeleton in preview scene' : 'Show skeleton in preview scene'
-                            }
-                            aria-pressed={row.layerVisible}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              toggleRowLayerVisible(row.id)
+                    <div className="editor-hierarchy" role="tree" aria-label="Objects in scene">
+                      {layerOrder.map((id) => {
+                        const spineRow = spineRows.find((r) => r.id === id)
+                        const spriteRow = spriteRows.find((r) => r.id === id)
+                        const row = spineRow ?? spriteRow
+                        if (!row) return null
+                        const isSelected = id === selectedSpineId || id === selectedSpriteId
+                        return (
+                          <div
+                            key={id}
+                            className={`editor-hierarchy-row${isSelected ? ' is-selected' : ''}${id === hierarchyDragId ? ' is-hierarchy-dragging' : ''}${id === hierarchyDragOverId ? ' is-hierarchy-drop-target' : ''}`}
+                            onDragOver={(e) => {
+                              e.preventDefault()
+                              e.dataTransfer.dropEffect = 'move'
+                              setHierarchyDragOverId(id)
                             }}
+                            onDrop={(e) => onHierarchyDropOnItem(e, id)}
                           >
-                            <span
-                              className={`editor-hierarchy-dot${row.layerVisible ? ' is-on' : ''}`}
-                              aria-hidden
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            className={`editor-hierarchy-lockbtn${row.locked ? ' is-locked' : ''}`}
-                            title={row.locked ? 'Locked — click to unlock moves' : 'Unlocked — click to lock position'}
-                            aria-label={row.locked ? 'Unlock canvas moves for this object' : 'Lock canvas moves'}
-                            aria-pressed={row.locked}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              toggleRowLocked(row.id)
-                            }}
-                          >
-                            {row.locked ? <IconPadlockClosed /> : <IconPadlockOpen />}
-                          </button>
-                          <button
-                            type="button"
-                            draggable
-                            className="editor-hierarchy-main"
-                            role="treeitem"
-                            aria-selected={row.id === selectedSpineId}
-                            aria-grabbed={hierarchyDragId === row.id}
-                            onClick={() => selectFromHierarchy(row.id)}
-                            onDragStart={(e) => onHierarchyDragStart(e, row.id)}
-                            onDragEnd={onHierarchyDragEnd}
-                          >
-                            <span className="editor-hierarchy-grip" aria-hidden="true" title="Drag to reorder">
-                              ⋮⋮
-                            </span>
-                            <span className="editor-hierarchy-chevron" aria-hidden="true">
-                              ▾
-                            </span>
-                            <span className="editor-hierarchy-label">
-                              <span
-                                className={
-                                  row.placeholderPolicyFrozen
-                                    ? 'editor-hierarchy-name editor-hierarchy-name--frozen-placeholder'
-                                    : 'editor-hierarchy-name'
-                                }
-                              >
-                                {row.displayName}
-                              </span>
-                              {row.pinnedUnder ? (
+                            <button
+                              type="button"
+                              className="editor-hierarchy-visibility"
+                              title={row.layerVisible ? 'Visible in scene (click to hide)' : 'Hidden in scene (click to show)'}
+                              aria-label={row.layerVisible ? 'Hide in preview scene' : 'Show in preview scene'}
+                              aria-pressed={row.layerVisible}
+                              onClick={(e) => { e.stopPropagation(); toggleRowLayerVisible(id) }}
+                            >
+                              <span className={`editor-hierarchy-dot${row.layerVisible ? ' is-on' : ''}`} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              className={`editor-hierarchy-lockbtn${row.locked ? ' is-locked' : ''}`}
+                              title={row.locked ? 'Locked — click to unlock moves' : 'Unlocked — click to lock position'}
+                              aria-label={row.locked ? 'Unlock canvas moves for this object' : 'Lock canvas moves'}
+                              aria-pressed={row.locked}
+                              onClick={(e) => { e.stopPropagation(); toggleRowLocked(id) }}
+                            >
+                              {row.locked ? <IconPadlockClosed /> : <IconPadlockOpen />}
+                            </button>
+                            <button
+                              type="button"
+                              draggable
+                              className="editor-hierarchy-main"
+                              role="treeitem"
+                              aria-selected={isSelected}
+                              aria-grabbed={hierarchyDragId === id}
+                              onClick={() => selectFromHierarchy(id)}
+                              onDragStart={(e) => onHierarchyDragStart(e, id)}
+                              onDragEnd={onHierarchyDragEnd}
+                            >
+                              <span className="editor-hierarchy-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
+                              <span className="editor-hierarchy-chevron" aria-hidden="true">▾</span>
+                              <span className="editor-hierarchy-label">
+                                {spriteRow ? (
+                                  <span className="editor-hierarchy-badge editor-hierarchy-badge--sprite">IMG</span>
+                                ) : null}
                                 <span
-                                  className="editor-hierarchy-pinned"
-                                  title={`Nested under ${
-                                    spineRows.find((h) => h.id === row.pinnedUnder?.hostRowId)?.displayName ?? 'host'
-                                  } · ${row.pinnedUnder.boneName}`}
+                                  className={
+                                    spineRow?.placeholderPolicyFrozen
+                                      ? 'editor-hierarchy-name editor-hierarchy-name--frozen-placeholder'
+                                      : 'editor-hierarchy-name'
+                                  }
                                 >
-                                  {' '}
-                                  ↳
+                                  {row.displayName}
                                 </span>
-                              ) : null}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            className="editor-hierarchy-remove"
-                            title="Remove from scene"
-                            aria-label={`Remove ${row.displayName} from scene`}
-                            disabled={busy}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setRemoveSpineDialog({ rowId: row.id, displayName: row.displayName })
-                            }}
-                          >
-                            <IconTrash />
-                          </button>
-                        </div>
-                      ))}
+                                {spineRow?.pinnedUnder ? (
+                                  <span
+                                    className="editor-hierarchy-pinned"
+                                    title={`Nested under ${spineRows.find((h) => h.id === spineRow.pinnedUnder?.hostRowId)?.displayName ?? 'host'} · ${spineRow.pinnedUnder.boneName}`}
+                                  >
+                                    {' '}↳
+                                  </span>
+                                ) : null}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              className="editor-hierarchy-remove"
+                              title="Remove from scene"
+                              aria-label={`Remove ${row.displayName} from scene`}
+                              disabled={busy}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (spineRow) setRemoveSpineDialog({ rowId: id, displayName: row.displayName })
+                                else removeSpriteFromProject(id)
+                              }}
+                            >
+                              <IconTrash />
+                            </button>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1704,8 +1931,8 @@ function App() {
                 <div className="editor-panel-title">Hierarchy</div>
                 <div className="editor-panel-content">
                   <p className="editor-sidebar-empty-hint">
-                    No Spine objects in the scene. Use <strong className="editor-kbd-label">Project</strong> in the
-                    title bar to import skeletons, atlases, and images.
+                    No objects in the scene. Use <strong className="editor-kbd-label">Project</strong> in the
+                    title bar to import Spine skeletons or drop image files onto the canvas.
                   </p>
                 </div>
               </div>
@@ -1763,7 +1990,7 @@ function App() {
                 type="button"
                 className="btn btn-compact"
                 onClick={() => stageRef.current?.fitAllSpinesInView()}
-                disabled={spineRows.length === 0}
+                disabled={layerOrder.length === 0}
               >
                 Fit all
               </button>
@@ -1829,11 +2056,15 @@ function App() {
               safeFramePreset={safeFramePreset}
               spineSceneRevision={spineRows.length}
               atlasPreviewRevision={atlasPreviewRevision}
-              onClearDragPointerTarget={() => setCanvasDragSpineId(null)}
+              onClearDragPointerTarget={() => { setCanvasDragSpineId(null) }}
               onSpineCanvasPointerDown={selectSpineFromCanvas}
               getSpineDragEnabled={getSpineDragEnabled}
               onSpineDragStart={onSpineDragStartForHistory}
               onSpineDragEnd={onSpineDragEndForHistory}
+              onSpriteCanvasPointerDown={selectSpriteFromCanvas}
+              getSpriteDragEnabled={getSpriteDragEnabled}
+              onSpriteDragStart={onSpriteDragStartForHistory}
+              onSpriteDragEnd={onSpriteDragEndForHistory}
             />
             {showMetricsOverlay ? (
               <ViewportMetricsOverlay
@@ -1859,38 +2090,57 @@ function App() {
         <aside className="editor-inspector" aria-label="Inspector">
           <div className="editor-inspector-header">
             <span className="editor-inspector-title">Inspector</span>
-            {selectedRow && (
-              <span className="editor-inspector-subtitle" title={selectedRow.displayName}>
-                {selectedRow.displayName}
+            {(selectedRow ?? selectedSpriteRow) && (
+              <span className="editor-inspector-subtitle" title={(selectedRow ?? selectedSpriteRow)!.displayName}>
+                {(selectedRow ?? selectedSpriteRow)!.displayName}
               </span>
             )}
           </div>
           <div className="editor-inspector-body">
-            {spineRows.length === 0 ? (
-              <p className="editor-inspector-empty">Import a Spine object to edit its properties.</p>
+            {layerOrder.length === 0 ? (
+              <p className="editor-inspector-empty">Import objects to edit their properties.</p>
             ) : (
-              spineRows.map((row) => (
-                <div
-                  key={row.id}
-                  className="editor-inspector-pane"
-                  hidden={row.id !== selectedSpineId}
-                >
-                  <SpineInstanceControls
-                    row={row}
-                    ref={(h) => registerSpineHandle(row.id, h)}
-                    viewportStageRef={stageRef}
-                    inspectorActive={row.id === selectedSpineId}
-                    canvasDragPickActive={canvasDragSpineId === row.id}
-                    onToggleCanvasDragPick={() => toggleCanvasDragPickForRow(row.id)}
-                    allRows={spineRows}
-                    onPlaceholderBind={onPlaceholderBind}
-                    onWorldPositionEditBegin={onWorldPositionEditBegin}
-                    onWorldPositionEditEnd={onWorldPositionEditEnd}
-                    onIgnorePlaceholderPolicy={() => ignoreSpinePlaceholderPolicy(row.id)}
-                    onAddToCommonAnimations={addToCommonAnimationNames}
-                  />
-                </div>
-              ))
+              <>
+                {spineRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="editor-inspector-pane"
+                    hidden={row.id !== selectedSpineId}
+                  >
+                    <SpineInstanceControls
+                      row={row}
+                      ref={(h) => registerSpineHandle(row.id, h)}
+                      viewportStageRef={stageRef}
+                      inspectorActive={row.id === selectedSpineId}
+                      canvasDragPickActive={canvasDragSpineId === row.id}
+                      onToggleCanvasDragPick={() => toggleCanvasDragPickForRow(row.id)}
+                      allRows={spineRows}
+                      onPlaceholderBind={onPlaceholderBind}
+                      onWorldPositionEditBegin={onWorldPositionEditBegin}
+                      onWorldPositionEditEnd={onWorldPositionEditEnd}
+                      onIgnorePlaceholderPolicy={() => ignoreSpinePlaceholderPolicy(row.id)}
+                      onAddToCommonAnimations={addToCommonAnimationNames}
+                    />
+                  </div>
+                ))}
+                {spriteRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="editor-inspector-pane"
+                    hidden={row.id !== selectedSpriteId}
+                  >
+                    <SpriteInstanceControls
+                      row={row}
+                      viewportStageRef={stageRef}
+                      inspectorActive={row.id === selectedSpriteId}
+                      canvasDragPickActive={row.id === selectedSpriteId}
+                      onToggleCanvasDragPick={() => { setSelectedSpriteId(row.id) }}
+                      onEditBegin={() => { setHistoryTick((t) => t + 1) }}
+                      onEditEnd={() => { setHistoryTick((t) => t + 1) }}
+                    />
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </aside>
@@ -1940,9 +2190,14 @@ function App() {
 
       <footer className="editor-statusbar">
         <span className="editor-statusbar-item">
-          {spineRows.length === 0
-            ? 'No Spine objects in scene'
-            : `${spineRows.length} Spine object${spineRows.length === 1 ? '' : 's'} loaded`}
+          {layerOrder.length === 0
+            ? 'No objects in scene'
+            : [
+                spineRows.length > 0 && `${spineRows.length} Spine`,
+                spriteRows.length > 0 && `${spriteRows.length} sprite${spriteRows.length === 1 ? '' : 's'}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
         </span>
         <span className="editor-statusbar-sep" aria-hidden="true" />
         <span className="editor-statusbar-item editor-statusbar-dim">
