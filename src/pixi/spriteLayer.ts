@@ -1,4 +1,4 @@
-import { Assets, Sprite, Texture, type Application, type Container, type FederatedPointerEvent } from 'pixi.js'
+import { Sprite, type Application, type Container, type FederatedPointerEvent } from 'pixi.js'
 import { Point } from 'pixi.js'
 import { snapWorldScalar } from './snapWorldPosition'
 
@@ -94,12 +94,20 @@ export function detachSpriteDrag(sprite: Sprite): void {
 
 /**
  * Load an image from an object URL and return a Pixi Sprite.
- * The sprite's anchor is set to (0.5, 0.5) so position matches world-space centre,
+ * Uses a plain HTMLImageElement — PixiJS Assets.load cannot determine the
+ * file type from blob:// URLs (no extension), so we bypass it entirely.
+ * The anchor is set to (0.5, 0.5) so position matches world-space centre,
  * consistent with Spine's placement origin convention.
  */
 export async function createPixiSprite(objectUrl: string): Promise<Sprite> {
-  const texture = await Assets.load<Texture>(objectUrl)
-  const sprite = new Sprite(texture)
+  const img = new Image()
+  img.src = objectUrl
+  await new Promise<void>((resolve, reject) => {
+    if (img.complete && img.naturalWidth > 0) { resolve(); return }
+    img.addEventListener('load', () => resolve(), { once: true })
+    img.addEventListener('error', () => reject(new Error('Failed to load sprite image')), { once: true })
+  })
+  const sprite = Sprite.from(img)
   sprite.anchor.set(0.5, 0.5)
   return sprite
 }
@@ -109,16 +117,13 @@ export function addSpriteToWorld(world: Container, sprite: Sprite): void {
   world.addChild(sprite)
 }
 
-/** Remove a sprite from its parent and free its texture + object URL. */
+/** Remove a sprite from its parent and destroy it. */
 export function destroyPixiSprite(sprite: Sprite, objectUrl?: string): void {
   detachSpriteDrag(sprite)
   sprite.parent?.removeChild(sprite)
-  sprite.destroy({ texture: true, textureSource: false })
+  sprite.destroy({ texture: true, textureSource: true })
   if (objectUrl) {
     try { URL.revokeObjectURL(objectUrl) } catch { /* ignore */ }
-  }
-  if (objectUrl) {
-    Assets.unload(objectUrl).catch(() => { /* ignore */ })
   }
 }
 
