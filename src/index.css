@@ -1,0 +1,75 @@
+:root {
+  /* Unity / Unreal–style slate */
+  --text: #e4e4e4;
+  --text-dim: #b0b0b0;
+  --text-muted: #858585;
+  --text-label: #9d9d9d;
+
+  --bg-deep: #1e1e1e;
+  --bg-workspace: #252526;
+  --bg-panel: #2d2d2d;
+  --bg-panel-header: #323232;
+  --bg-input: #3c3c3c;
+  --bg-hover: #3e3e40;
+
+  --border: #3f3f46;
+  --border-subtle: #2a2a2a;
+  --border-focus: #569cd6;
+
+  --accent: #6a9a36;
+  --accent-hover: #7aad42;
+  --accent-pressed: #5a8530;
+
+  --tab-active: #252526;
+  --tab-inactive: #2d2d2d;
+
+  --status-ok: #89d185;
+  --status-warn: #dcdcaa;
+  --status-err: #f48771;
+  --status-info: #9cdcfe;
+
+  font-family:
+    'Segoe UI',
+    'Inter',
+    system-ui,
+    -apple-system,
+    Roboto,
+    sans-serif;
+  line-height: 1.45;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text);
+  background-color: var(--bg-deep);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2,
+p {
+  font-family: inherit;
+}
+
+select,
+button,
+input {
+  font-family: inherit;
+}
