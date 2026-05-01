@@ -1883,7 +1883,9 @@ function App() {
                               <span className="editor-hierarchy-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
                               <span className="editor-hierarchy-chevron" aria-hidden="true">▾</span>
                               <span className="editor-hierarchy-label">
-                                {spriteRow ? (
+                                {spineRow ? (
+                                  <span className="editor-hierarchy-badge editor-hierarchy-badge--spine">SPINE</span>
+                                ) : spriteRow ? (
                                   <span className="editor-hierarchy-badge editor-hierarchy-badge--sprite">IMG</span>
                                 ) : null}
                                 <span

@@ -2197,10 +2197,29 @@
   flex-shrink: 0;
 }
 
+.editor-hierarchy-badge--spine {
+  background: rgba(78, 201, 120, 0.12);
+  border: 1px solid rgba(78, 201, 120, 0.35);
+  color: #4ec978;
+}
+
 .editor-hierarchy-badge--sprite {
   background: rgba(86, 180, 233, 0.14);
   border: 1px solid rgba(86, 180, 233, 0.35);
   color: #56b4e9;
+}
+
+/* Reserved for future object types */
+.editor-hierarchy-badge--font {
+  background: rgba(212, 160, 57, 0.12);
+  border: 1px solid rgba(212, 160, 57, 0.35);
+  color: #d4a039;
+}
+
+.editor-hierarchy-badge--particles {
+  background: rgba(180, 86, 233, 0.12);
+  border: 1px solid rgba(180, 86, 233, 0.35);
+  color: #b456e9;
 }
 
 /* ──────────────────────────────────────────────────────────
