@@ -110,9 +110,9 @@ export type PixiStageProps = {
   /** Canvas drag ended (for undo history). */
   onSpineDragEnd?: () => void
   /** Left-click on a sprite on the canvas — sync hierarchy/inspector selection to that instance. */
-  onSpriteCanvasPointerDown?: (sprite: Sprite) => void
+  onSpriteCanvasPointerDown?: (sprite: AnySprite) => void
   /** Per-frame check: return false to block starting a sprite drag. */
-  getSpriteDragEnabled?: (sprite: Sprite) => boolean
+  getSpriteDragEnabled?: (sprite: AnySprite) => boolean
   /** Sprite canvas drag began (for undo history). */
   onSpriteDragStart?: () => void
   /** Sprite canvas drag ended (for undo history). */
@@ -385,7 +385,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   const onSpineDragEndRef = useRef(onSpineDragEnd)
   const placeholderDetachRef = useRef(new Map<string, () => void>())
   const draggingSpineRef = useRef<Spine | null>(null)
-  const draggingSpriteRef = useRef<Sprite | null>(null)
+  const draggingSpriteRef = useRef<AnySprite | null>(null)
   const onSpriteCanvasPointerDownRef = useRef(onSpriteCanvasPointerDown)
   const getSpriteDragEnabledRef = useRef(getSpriteDragEnabled)
   const onSpriteDragStartRef = useRef(onSpriteDragStart)

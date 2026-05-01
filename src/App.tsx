@@ -20,7 +20,7 @@ import {
 } from './SpineInstanceControls'
 import { SpriteInstanceControls } from './SpriteInstanceControls'
 import type { NineSliceInsets, SpriteRow } from './SpriteRow'
-import { isImageFile } from './pixi/spriteLayer'
+import { isImageFile, type AnySprite } from './pixi/spriteLayer'
 import {
   groupsLoadableFromReport,
   mergeSpineValidationIssues,
@@ -457,7 +457,7 @@ function App() {
   )
 
   const selectSpriteFromCanvas = useCallback(
-    (sprite: import('pixi.js').Sprite) => {
+    (sprite: AnySprite) => {
       const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
       if (!row) return
       setSelectedSpriteId(row.id)
@@ -473,7 +473,7 @@ function App() {
   }, [spineRows])
 
   const getSpriteDragEnabled = useCallback(
-    (sprite: import('pixi.js').Sprite) => {
+    (sprite: AnySprite) => {
       const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
       return row ? !row.locked : true
     },
