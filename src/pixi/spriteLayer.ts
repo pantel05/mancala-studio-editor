@@ -164,6 +164,7 @@ export function convertToNineSlice(
   row: SpriteRow,
   world: Container,
   insets: NineSliceInsets,
+  app?: Application,
   dragOpts?: AttachSpriteDragOptions,
 ): NineSliceSprite {
   const old = row.sprite
@@ -196,7 +197,7 @@ export function convertToNineSlice(
     world.addChild(nss)
   }
 
-  if (dragOpts) attachSpriteDrag(nss, dragOpts as never, world, dragOpts)
+  if (app && dragOpts) attachSpriteDrag(nss, app, world, dragOpts)
   row.sprite = nss
   return nss
 }
@@ -210,6 +211,7 @@ export function convertToNineSlice(
 export function convertToSprite(
   row: SpriteRow,
   world: Container,
+  app?: Application,
   dragOpts?: AttachSpriteDragOptions,
 ): Sprite {
   const old = row.sprite
@@ -233,24 +235,35 @@ export function convertToSprite(
     world.addChild(sprite)
   }
 
-  if (dragOpts) attachSpriteDrag(sprite, dragOpts as never, world, dragOpts)
+  if (app && dragOpts) attachSpriteDrag(sprite, app, world, dragOpts)
   row.sprite = sprite
   return sprite
 }
 
 /**
- * Rebuild a NineSliceSprite in-place with new inset values.
- * PixiJS does not allow mutating leftWidth/topHeight etc. after construction,
- * so we destroy and recreate, preserving all other properties.
- * Mutates `row.sprite` in place.
+ * Update a NineSliceSprite's insets in-place.
+ * PixiJS v8 exposes `leftWidth`, `topHeight`, `rightWidth`, `bottomHeight`
+ * as mutable properties — no recreation required.
+ */
+export function setNineSliceInsets(sprite: NineSliceSprite, insets: NineSliceInsets): void {
+  sprite.leftWidth   = insets.left
+  sprite.topHeight   = insets.top
+  sprite.rightWidth  = insets.right
+  sprite.bottomHeight = insets.bottom
+}
+
+/**
+ * @deprecated Use `setNineSliceInsets` for in-place mutation (PixiJS v8).
+ * Kept for backward compatibility — delegates to `convertToNineSlice`.
  */
 export function rebuildNineSlice(
   row: SpriteRow,
   world: Container,
   insets: NineSliceInsets,
+  app?: Application,
   dragOpts?: AttachSpriteDragOptions,
 ): NineSliceSprite {
-  return convertToNineSlice(row, world, insets, dragOpts)
+  return convertToNineSlice(row, world, insets, app, dragOpts)
 }
 
 // ---------------------------------------------------------------------------

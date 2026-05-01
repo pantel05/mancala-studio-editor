@@ -176,6 +176,7 @@ export function SpriteInstanceControls({
   inspectorActive = false,
   onEditBegin,
   onEditEnd,
+  onNineSliceToggle,
 }: {
   row: SpriteRow
   viewportStageRef?: RefObject<PixiStageHandle | null>
@@ -186,6 +187,8 @@ export function SpriteInstanceControls({
   onEditBegin?: () => void
   /** After property change attempt. */
   onEditEnd?: (committed: boolean) => void
+  /** Called after 9-slice is toggled on or off (enables/disables canvas guides). */
+  onNineSliceToggle?: (enabled: boolean, row: SpriteRow) => void
 }) {
   // ── Local state mirroring the Sprite properties ──────────────────────────
   const [scaleLinked, setScaleLinked] = useState(true)
@@ -227,13 +230,24 @@ export function SpriteInstanceControls({
   sizeLinkedRef.current = sizeLinked
   const sizeLinkedRatioRef = useRef(1)
 
-  // Reset 9-slice state when row changes
+  // Reset 9-slice state when the selected row changes (different id)
   useEffect(() => {
     setNineSliceEnabled(row.nineSlice)
     setInsets({ ...row.nineSliceInsets })
     setSliceWidth(row.sprite.width)
     setSliceHeight(row.sprite.height)
   }, [row.id, row.sprite, row.nineSlice, row.nineSliceInsets])
+
+  // Sync insets from the row object when the row REFERENCE changes but the id
+  // stays the same (happens after a canvas guide drag end triggers setSpriteRows
+  // in App.tsx, creating a new spread copy of the row with updated nineSliceInsets).
+  const prevRowRef = useRef(row)
+  useEffect(() => {
+    if (prevRowRef.current !== row && prevRowRef.current.id === row.id) {
+      setInsets({ ...row.nineSliceInsets })
+    }
+    prevRowRef.current = row
+  }, [row])
 
   // Sync width/height → NineSliceSprite
   useEffect(() => {
@@ -270,16 +284,18 @@ export function SpriteInstanceControls({
       setInsets(newInsets)
       setSliceWidth(w)
       setSliceHeight(h)
+      onNineSliceToggle?.(true, row)
     } else {
       stage.disableNineSlice(row)
       row.nineSlice = false
       // Reset scale to 1 so the sprite appears at natural texture size
       setScaleX(row.sprite.scale.x)
       setScaleY(row.sprite.scale.y)
+      onNineSliceToggle?.(false, row)
     }
     setNineSliceEnabled((v) => !v)
     onEditEnd?.(true)
-  }, [nineSliceEnabled, row, viewportStageRef, onEditBegin, onEditEnd])
+  }, [nineSliceEnabled, row, viewportStageRef, onEditBegin, onEditEnd, onNineSliceToggle])
 
   const applyInsets = useCallback((newInsets: NineSliceInsets) => {
     const stage = viewportStageRef?.current

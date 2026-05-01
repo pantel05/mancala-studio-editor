@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Application, Container, Graphics, Point, Sprite } from 'pixi.js'
+import { Application, Container, Graphics, NineSliceSprite, Point, Sprite } from 'pixi.js'
 import { Spine } from '@esotericsoftware/spine-pixi-v8'
 import { attachSpineDrag, detachSpineDrag } from './pixi/attachSpineDrag'
 import {
@@ -15,10 +15,11 @@ import {
   destroyPixiSprite,
   convertToNineSlice,
   convertToSprite,
-  rebuildNineSlice,
+  setNineSliceInsets,
   type AnySprite,
 } from './pixi/spriteLayer'
 import type { NineSliceInsets, SpriteRow } from './SpriteRow'
+import { NineSliceGuide } from './pixi/nineSliceGuide'
 import { attachSpineToHostPlaceholder } from './pixi/placeholderAttachment'
 import {
   attachStageNavigation,
@@ -196,8 +197,8 @@ export type PixiStageHandle = {
    */
   enableNineSlice(row: SpriteRow, insets: NineSliceInsets): void
   /**
-   * Rebuild the NineSliceSprite with updated insets (PixiJS requires recreation).
-   * Mutates `row.sprite` in place.
+   * Update a NineSliceSprite's insets in-place (PixiJS v8 allows mutable leftWidth etc.).
+   * Mutates `row.nineSliceInsets` in place.
    */
   updateNineSliceInsets(row: SpriteRow, insets: NineSliceInsets): void
   /**
@@ -205,6 +206,19 @@ export type PixiStageHandle = {
    * Mutates `row.sprite` in place.
    */
   disableNineSlice(row: SpriteRow): void
+  /**
+   * Overlay draggable guide lines on the canvas for the given NineSliceSprite row.
+   * The guides auto-sync with the sprite's position/rotation every frame.
+   */
+  showNineSliceGuides(
+    row: SpriteRow,
+    insets: NineSliceInsets,
+    onInsetChange: (newInsets: NineSliceInsets) => void,
+    onDragStart: () => void,
+    onDragEnd: () => void,
+  ): void
+  /** Remove the 9-slice guide overlay (if any). */
+  hideNineSliceGuides(): void
 }
 
 function bringOverlayToFront(world: Container, overlay: Graphics) {
@@ -361,6 +375,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   const onViewRef = useRef(onStageViewChange)
   const safeFramePresetRef = useRef(safeFramePreset)
   const drawMeterRef = useRef<WebGlDrawCallMeter | null>(null)
+  const nineSliceGuideRef = useRef<NineSliceGuide | null>(null)
   /** Last known renderer logical size — keeps world origin pinned to viewport center on resize. */
   const stageScreenSizeRef = useRef<StageScreenDim>({ w: 0, h: 0 })
   const clearDragPointerTargetRef = useRef(onClearDragPointerTarget)
@@ -675,6 +690,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         meter.dispose()
         drawMeterRef.current = null
       }
+      nineSliceGuideRef.current?.destroy()
+      nineSliceGuideRef.current = null
       appRef.current = null
       worldRef.current = null
       centerShellRef.current = null
@@ -1101,32 +1118,14 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
         },
       }
-      convertToNineSlice(row, world, insets, dragOpts as never)
+      convertToNineSlice(row, world, insets, application, dragOpts)
       if (overlay) bringOverlayToFront(world, overlay)
     },
 
     updateNineSliceInsets(row: SpriteRow, insets: NineSliceInsets) {
-      const application = appRef.current
-      const world = worldRef.current
-      const overlay = overlayRef.current
-      if (!application || !world) return
-      const dragOpts = {
-        onLeftPointerDown: () => onSpriteCanvasPointerDownRef.current?.(row.sprite),
-        isDragEnabled: () => getSpriteDragEnabledRef.current?.(row.sprite) ?? true,
-        onDragStart: (cx: number, cy: number) => {
-          draggingSpriteRef.current = row.sprite
-          tipApplyFromClientRef.current(cx, cy)
-          onSpriteDragStartRef.current?.()
-        },
-        onDragEnd: () => {
-          draggingSpriteRef.current = null
-          onSpriteDragEndRef.current?.()
-          const last = lastPointerClientRef.current
-          requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
-        },
-      }
-      rebuildNineSlice(row, world, insets, dragOpts as never)
-      if (overlay) bringOverlayToFront(world, overlay)
+      if (!(row.sprite instanceof NineSliceSprite)) return
+      setNineSliceInsets(row.sprite, insets)
+      row.nineSliceInsets = insets
     },
 
     disableNineSlice(row: SpriteRow) {
@@ -1149,8 +1148,39 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           requestAnimationFrame(() => tipApplyFromClientRef.current(last.cx, last.cy))
         },
       }
-      convertToSprite(row, world, dragOpts as never)
+      nineSliceGuideRef.current?.destroy()
+      nineSliceGuideRef.current = null
+      convertToSprite(row, world, application, dragOpts)
       if (overlay) bringOverlayToFront(world, overlay)
+    },
+
+    showNineSliceGuides(
+      row: SpriteRow,
+      insets: NineSliceInsets,
+      onInsetChange: (newInsets: NineSliceInsets) => void,
+      onDragStart: () => void,
+      onDragEnd: () => void,
+    ) {
+      const application = appRef.current
+      const world = worldRef.current
+      const overlay = overlayRef.current
+      if (!application || !world) return
+      nineSliceGuideRef.current?.destroy()
+      nineSliceGuideRef.current = new NineSliceGuide(
+        application,
+        world,
+        row,
+        insets,
+        onInsetChange,
+        onDragStart,
+        onDragEnd,
+        overlay ?? undefined,
+      )
+    },
+
+    hideNineSliceGuides() {
+      nineSliceGuideRef.current?.destroy()
+      nineSliceGuideRef.current = null
     },
 
     syncFullLayerOrder(order: Array<{ kind: 'spine' | 'sprite'; obj: Spine | AnySprite }>) {

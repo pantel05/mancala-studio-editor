@@ -19,7 +19,7 @@ import {
   type SpineInstanceHandle,
 } from './SpineInstanceControls'
 import { SpriteInstanceControls } from './SpriteInstanceControls'
-import type { SpriteRow } from './SpriteRow'
+import type { NineSliceInsets, SpriteRow } from './SpriteRow'
 import { isImageFile } from './pixi/spriteLayer'
 import {
   groupsLoadableFromReport,
@@ -318,6 +318,8 @@ function App() {
   const [layerOrder, setLayerOrder] = useState<string[]>([])
   /** Selected sprite ID — mutually exclusive with the spine selection. */
   const [selectedSpriteId, setSelectedSpriteId] = useState<string | null>(null)
+  const selectedSpriteIdRef = useRef(selectedSpriteId)
+  useEffect(() => { selectedSpriteIdRef.current = selectedSpriteId }, [selectedSpriteId])
 
   const undoStackRef = useRef<SceneSnapshot[]>([])
   const redoStackRef = useRef<SceneSnapshot[]>([])
@@ -546,6 +548,69 @@ function App() {
   const selectedSpriteRow = useMemo(
     () => spriteRows.find((r) => r.id === selectedSpriteId) ?? null,
     [spriteRows, selectedSpriteId],
+  )
+
+  // ── 9-slice guide callbacks (stable wrappers referencing refs) ─────────────
+  const guideInsetChangeRef = useRef<((newInsets: NineSliceInsets) => void) | null>(null)
+  const guideDragStartRef   = useRef<(() => void) | null>(null)
+  const guideDragEndRef     = useRef<(() => void) | null>(null)
+
+  guideInsetChangeRef.current = (newInsets: NineSliceInsets) => {
+    const row = spriteRowsRef.current.find((r) => r.id === selectedSpriteIdRef.current)
+    if (!row?.nineSlice) return
+    row.nineSliceInsets = newInsets
+    stageRef.current?.updateNineSliceInsets(row, newInsets)
+  }
+
+  guideDragStartRef.current = () => {
+    setHistoryTick((t) => t + 1)
+  }
+
+  guideDragEndRef.current = () => {
+    const row = spriteRowsRef.current.find((r) => r.id === selectedSpriteIdRef.current)
+    if (!row) return
+    // Push a copy with updated insets so the inspector re-renders
+    setSpriteRows((prev) =>
+      prev.map((r) => (r.id === row.id ? { ...r, nineSliceInsets: { ...row.nineSliceInsets } } : r)),
+    )
+    setHistoryTick((t) => t + 1)
+  }
+
+  // Show/hide guides whenever the selected sprite changes
+  useEffect(() => {
+    if (!selectedSpriteId) {
+      stageRef.current?.hideNineSliceGuides()
+      return
+    }
+    const row = spriteRowsRef.current.find((r) => r.id === selectedSpriteId)
+    if (row?.nineSlice) {
+      stageRef.current?.showNineSliceGuides(
+        row,
+        row.nineSliceInsets,
+        (ins) => guideInsetChangeRef.current?.(ins),
+        () => guideDragStartRef.current?.(),
+        () => guideDragEndRef.current?.(),
+      )
+    } else {
+      stageRef.current?.hideNineSliceGuides()
+    }
+  }, [selectedSpriteId])
+
+  const handleNineSliceToggle = useCallback(
+    (enabled: boolean, row: SpriteRow) => {
+      if (enabled) {
+        stageRef.current?.showNineSliceGuides(
+          row,
+          row.nineSliceInsets,
+          (ins) => guideInsetChangeRef.current?.(ins),
+          () => guideDragStartRef.current?.(),
+          () => guideDragEndRef.current?.(),
+        )
+      } else {
+        stageRef.current?.hideNineSliceGuides()
+      }
+    },
+    [],
   )
 
   const atlas1xAvailable = useMemo(
@@ -2156,6 +2221,7 @@ function App() {
                       onToggleCanvasDragPick={() => { setSelectedSpriteId(row.id) }}
                       onEditBegin={() => { setHistoryTick((t) => t + 1) }}
                       onEditEnd={() => { setHistoryTick((t) => t + 1) }}
+                      onNineSliceToggle={handleNineSliceToggle}
                     />
                   </div>
                 ))}
