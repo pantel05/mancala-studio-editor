@@ -1296,6 +1296,13 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.spine-controls-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .spine-draw-order {
   display: flex;
   flex-shrink: 0;
@@ -2283,6 +2290,21 @@
   white-space: nowrap;
 }
 
+.spine-controls-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #3dd68c;
+  background: rgba(61, 214, 140, 0.12);
+  border: 1px solid rgba(61, 214, 140, 0.3);
+  border-radius: 2px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  pointer-events: none;
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .sprite-controls-badge {
   font-size: 9px;
   font-weight: 700;
@@ -2292,7 +2314,10 @@
   border: 1px solid rgba(86, 180, 233, 0.3);
   border-radius: 2px;
   padding: 1px 5px;
+  text-transform: uppercase;
+  pointer-events: none;
   flex-shrink: 0;
+  align-self: center;
 }
 
 .sprite-controls-body {

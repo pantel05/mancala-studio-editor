@@ -1196,23 +1196,26 @@ export const SpineInstanceControls = forwardRef<
         {pinnedBanner}
         <div className="spine-controls-head">
           <span className="spine-controls-title">{row.displayName}</span>
-          <div className="spine-draw-order" role="group" aria-label="Draw order">
-            <button
-              type="button"
-              className="spine-order-btn"
-              onClick={drawToFront}
-              title="Draw in front of other skeletons"
-            >
-              Front
-            </button>
-            <button
-              type="button"
-              className="spine-order-btn"
-              onClick={drawToBack}
-              title="Draw behind other skeletons"
-            >
-              Back
-            </button>
+          <div className="spine-controls-head-right">
+            <div className="spine-draw-order" role="group" aria-label="Draw order">
+              <button
+                type="button"
+                className="spine-order-btn"
+                onClick={drawToFront}
+                title="Draw in front of other skeletons"
+              >
+                Front
+              </button>
+              <button
+                type="button"
+                className="spine-order-btn"
+                onClick={drawToBack}
+                title="Draw behind other skeletons"
+              >
+                Back
+              </button>
+            </div>
+            <span className="spine-controls-badge">Skeleton</span>
           </div>
         </div>
         {worldPositionBlock}
@@ -1284,23 +1287,26 @@ export const SpineInstanceControls = forwardRef<
       {pinnedBanner}
       <div className="spine-controls-head">
         <span className="spine-controls-title">{row.displayName}</span>
-        <div className="spine-draw-order" role="group" aria-label="Draw order">
-          <button
-            type="button"
-            className="spine-order-btn"
-            onClick={drawToFront}
-            title="Draw in front of other skeletons"
-          >
-            Front
-          </button>
-          <button
-            type="button"
-            className="spine-order-btn"
-            onClick={drawToBack}
-            title="Draw behind other skeletons"
-          >
-            Back
-          </button>
+        <div className="spine-controls-head-right">
+          <div className="spine-draw-order" role="group" aria-label="Draw order">
+            <button
+              type="button"
+              className="spine-order-btn"
+              onClick={drawToFront}
+              title="Draw in front of other skeletons"
+            >
+              Front
+            </button>
+            <button
+              type="button"
+              className="spine-order-btn"
+              onClick={drawToBack}
+              title="Draw behind other skeletons"
+            >
+              Back
+            </button>
+          </div>
+          <span className="spine-controls-badge">Skeleton</span>
         </div>
       </div>
       <div className="spine-controls-body">
