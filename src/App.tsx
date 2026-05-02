@@ -266,6 +266,7 @@ function App() {
   const [commonAnimationNamesModalOpen, setCommonAnimationNamesModalOpen] = useState(false)
   const [helpModalOpen, setHelpModalOpen] = useState(false)
   const [pendingUnknownAnims, setPendingUnknownAnims] = useState<UnknownAnimEntry[] | null>(null)
+  const [pendingUnknownPlaceholders, setPendingUnknownPlaceholders] = useState<UnknownAnimEntry[] | null>(null)
   const [removeSpineDialog, setRemoveSpineDialog] = useState<null | { rowId: string; displayName: string }>(
     null,
   )
@@ -920,6 +921,13 @@ function App() {
         if (promptEntries.length > 0) {
           setPendingUnknownAnims(promptEntries)
         }
+        // Placeholder prompt: show when frozen instances have unknown placeholder bones
+        const phPromptEntries: UnknownAnimEntry[] = newInstances
+          .filter((inst) => inst.placeholderPolicyFrozen && (inst.unknownPlaceholderNames?.length ?? 0) > 0)
+          .map((inst) => ({ displayName: inst.displayName, names: inst.unknownPlaceholderNames! }))
+        if (phPromptEntries.length > 0) {
+          setPendingUnknownPlaceholders(phPromptEntries)
+        }
       }
     } finally {
       setBusy(false)
@@ -1128,6 +1136,17 @@ function App() {
 
   const onDismissUnknownAnims = useCallback(() => {
     setPendingUnknownAnims(null)
+  }, [])
+
+  const onConfirmUnknownPlaceholders = useCallback((toAdd: string[]) => {
+    setPendingUnknownPlaceholders(null)
+    if (toAdd.length > 0) {
+      persistCommonPlaceholderNames([...new Set([...commonPlaceholderNames, ...toAdd])])
+    }
+  }, [commonPlaceholderNames, persistCommonPlaceholderNames])
+
+  const onDismissUnknownPlaceholders = useCallback(() => {
+    setPendingUnknownPlaceholders(null)
   }, [])
 
   const ignoreSpinePlaceholderPolicy = useCallback((rowId: string) => {
@@ -1702,7 +1721,7 @@ function App() {
         <div className="editor-titlebar-left">
           <img
             className="editor-app-logo"
-            src="/mancala-gaming-logo.png"
+            src={`${import.meta.env.BASE_URL}mancala-gaming-logo.png`}
             alt=""
             decoding="async"
           />
@@ -2315,6 +2334,24 @@ function App() {
         entries={pendingUnknownAnims ?? []}
         onConfirm={onConfirmUnknownAnims}
         onDismiss={onDismissUnknownAnims}
+      />
+
+      <UnknownAnimationsPromptModal
+        open={pendingUnknownPlaceholders !== null && pendingUnknownPlaceholders.length > 0}
+        entries={pendingUnknownPlaceholders ?? []}
+        onConfirm={onConfirmUnknownPlaceholders}
+        onDismiss={onDismissUnknownPlaceholders}
+        title="Unknown placeholder bones detected"
+        description={
+          <>
+            The following placeholder bones were found that are <strong>not</strong> in your{' '}
+            <strong>Common Placeholders</strong> list. The affected{' '}
+            {(pendingUnknownPlaceholders?.length ?? 0) === 1 ? 'object is' : 'objects are'} currently{' '}
+            <strong>frozen</strong>. Add the correct names to unfreeze, or dismiss to keep them
+            frozen and fix via <em>Settings → Common placeholders</em>.
+          </>
+        }
+        listLabel="Common Placeholders"
       />
 
       <HelpModal

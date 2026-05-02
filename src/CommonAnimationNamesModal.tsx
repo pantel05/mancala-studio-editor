@@ -19,33 +19,55 @@ export function CommonAnimationNamesModal({
   const panelRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState('')
   const closeBtnRef = useRef<HTMLButtonElement>(null)
+  const confirmBtnRef = useRef<HTMLButtonElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [pendingName, setPendingName] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) return
-    closeBtnRef.current?.focus()
+    if (!open) {
+      setPendingName(null)
+      setDraft('')
+    }
   }, [open])
 
   useEffect(() => {
     if (!open) return
+    if (pendingName !== null) {
+      confirmBtnRef.current?.focus()
+    } else {
+      closeBtnRef.current?.focus()
+    }
+  }, [open, pendingName])
+
+  useEffect(() => {
+    if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        if (pendingName !== null) setPendingName(null)
+        else onClose()
+      }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, pendingName, onClose])
 
-  const addName = useCallback(() => {
+  const requestAddName = useCallback(() => {
     const t = draft.trim()
     if (t.length === 0) return
     if (names.includes(t)) {
       setDraft('')
       return
     }
-    onNamesChange([...names, t])
+    setPendingName(t)
+  }, [draft, names])
+
+  const confirmAddName = useCallback(() => {
+    if (pendingName === null) return
+    onNamesChange([...names, pendingName])
+    setPendingName(null)
     setDraft('')
-  }, [draft, names, onNamesChange])
+  }, [pendingName, names, onNamesChange])
 
   const removeAt = useCallback(
     (index: number) => {
@@ -123,95 +145,145 @@ export function CommonAnimationNamesModal({
       >
         <div className="editor-modal-head">
           <h2 id={titleId} className="editor-modal-title">
-            Common Animation States
+            {pendingName !== null ? 'Review before adding' : 'Common Animation States'}
           </h2>
           <button
             ref={closeBtnRef}
             type="button"
             className="editor-modal-close"
-            onClick={onClose}
-            aria-label="Close"
+            onClick={pendingName !== null ? () => setPendingName(null) : onClose}
+            aria-label={pendingName !== null ? 'Go back' : 'Close'}
           >
             ×
           </button>
         </div>
-        <div className="editor-modal-body">
-          <p className="editor-modal-desc">
-            Animation names listed here are the approved set for your project. When a loaded Spine has
-            animation names that are <strong>not</strong> in this list, a warning will appear in the
-            validation panel and on the object in the Inspector. Names are saved automatically in this
-            browser. Use <strong>Export</strong> / <strong>Import</strong> if you change servers or
-            browsers.
-          </p>
-          {importError && (
-            <p className="editor-modal-import-error" role="alert">{importError}</p>
-          )}
-          <div className="editor-placeholder-add-row">
-            <input
-              type="text"
-              className="editor-modal-input"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addName()
-                }
-              }}
-              placeholder="e.g. idle"
-              aria-label="New animation state name"
-            />
-            <button type="button" className="btn btn-primary" onClick={addName}>
-              Add
-            </button>
-          </div>
-          {names.length === 0 ? (
-            <p className="editor-modal-empty">No names yet — add your first animation state name above.</p>
-          ) : (
-            <ul className="editor-placeholder-name-list">
-              {names.map((n, i) => (
-                <li key={`${n}-${i}`} className="editor-placeholder-name-item">
-                  <code className="editor-placeholder-name-code">{n}</code>
-                  <button type="button" className="btn btn-sm" onClick={() => removeAt(i)}>
-                    Remove
-                  </button>
+
+        {pendingName !== null ? (
+          <>
+            <div className="editor-modal-body">
+              <div className="add-confirm-warning" role="alert">
+                <span className="add-confirm-warning-icon">⚠️</span>
+                <div className="add-confirm-warning-text">
+                  <p>
+                    You are about to add the following name to your{' '}
+                    <strong>Common Animation States</strong> list. Once saved, it will be treated
+                    as <strong>valid and approved</strong> in all future imports — the validator
+                    will no longer flag it.
+                  </p>
+                  <p>
+                    <strong>
+                      If this name contains a typo, it will silently pass future validation
+                    </strong>{' '}
+                    and may cause integration issues that are difficult to trace later.
+                  </p>
+                  <p>Please double-check the spelling carefully before confirming.</p>
+                </div>
+              </div>
+              <ul className="add-confirm-name-list">
+                <li className="add-confirm-name-item">
+                  <code>{pendingName}</code>
                 </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="editor-modal-foot editor-modal-foot--placeholders">
-          <div className="editor-modal-foot-actions">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={exportNames}
-              disabled={names.length === 0}
-              title="Download as JSON file — use Import to restore on any port or server"
-            >
-              Export
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={triggerImport}
-              title="Load from a previously exported JSON file — merges with current list"
-            >
-              Import
-            </button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".json,application/json"
-              className="visually-hidden"
-              aria-hidden
-              onChange={onImportFile}
-            />
-          </div>
-          <button type="button" className="btn btn-primary" onClick={onClose}>
-            Done
-          </button>
-        </div>
+              </ul>
+            </div>
+            <div className="editor-modal-foot editor-modal-foot--confirm">
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setPendingName(null)}
+              >
+                Go back
+              </button>
+              <button
+                ref={confirmBtnRef}
+                type="button"
+                className="btn btn-primary"
+                onClick={confirmAddName}
+              >
+                Confirm &amp; Add
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="editor-modal-body">
+              <p className="editor-modal-desc">
+                Animation names listed here are the approved set for your project. When a loaded Spine has
+                animation names that are <strong>not</strong> in this list, a warning will appear in the
+                validation panel and on the object in the Inspector. Names are saved automatically in this
+                browser. Use <strong>Export</strong> / <strong>Import</strong> if you change servers or
+                browsers.
+              </p>
+              {importError && (
+                <p className="editor-modal-import-error" role="alert">{importError}</p>
+              )}
+              <div className="editor-placeholder-add-row">
+                <input
+                  type="text"
+                  className="editor-modal-input"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      requestAddName()
+                    }
+                  }}
+                  placeholder="e.g. idle"
+                  aria-label="New animation state name"
+                />
+                <button type="button" className="btn btn-primary" onClick={requestAddName}>
+                  Add
+                </button>
+              </div>
+              {names.length === 0 ? (
+                <p className="editor-modal-empty">No names yet — add your first animation state name above.</p>
+              ) : (
+                <ul className="editor-placeholder-name-list">
+                  {names.map((n, i) => (
+                    <li key={`${n}-${i}`} className="editor-placeholder-name-item">
+                      <code className="editor-placeholder-name-code">{n}</code>
+                      <button type="button" className="btn btn-sm" onClick={() => removeAt(i)}>
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="editor-modal-foot editor-modal-foot--placeholders">
+              <div className="editor-modal-foot-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={exportNames}
+                  disabled={names.length === 0}
+                  title="Download as JSON file — use Import to restore on any port or server"
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={triggerImport}
+                  title="Load from a previously exported JSON file — merges with current list"
+                >
+                  Import
+                </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="visually-hidden"
+                  aria-hidden
+                  onChange={onImportFile}
+                />
+              </div>
+              <button type="button" className="btn btn-primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

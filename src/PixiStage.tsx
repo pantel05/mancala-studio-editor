@@ -41,6 +41,7 @@ import {
 import { groupSpineFiles, type SpineFileGroup } from './spine/groupSpineFiles'
 import { loadSpineFromFileGroup } from './spine/loadSpineFromFileGroup'
 import { validateLoadedSkeletonPlaceholders } from './spine/validateLoadedSkeletonPlaceholders'
+import { isPlaceholderBoneName } from './spine/placeholderConvention'
 import type { ValidationIssue } from './spine/validateSpineSelection'
 import { createWebGlDrawCallMeter, type WebGlDrawCallMeter } from './pixi/webglDrawCallMeter'
 
@@ -77,6 +78,8 @@ export type LoadedSpineInstance = {
   activeAtlasTag: string
   /** Loaded despite invalid placeholder names — frozen until policy passes (see Bundle validation). */
   placeholderPolicyFrozen?: boolean
+  /** Placeholder-like bone names that are not in the allowed list (populated when frozen). */
+  unknownPlaceholderNames?: string[]
 }
 
 /** Minimal row data for parenting symbol spines under placeholder bones. */
@@ -951,7 +954,9 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           applySpineOriginAtRootBone(result.spine)
           result.spine.zIndex = 0
           let placeholderPolicyFrozen = false
+          let unknownPlaceholderNames: string[] = []
           if (allowed.length > 0) {
+            const allowedSet = new Set(allowed)
             const phIssues = validateLoadedSkeletonPlaceholders(
               result.displayName,
               result.spine,
@@ -966,6 +971,9 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
               loadNotesExtra.push(
                 `${result.displayName}: loaded frozen (placeholder names) — see Bundle validation until fixed.`,
               )
+              unknownPlaceholderNames = result.spine.skeleton.data.bones
+                .map((bd) => bd.name)
+                .filter((n) => !allowedSet.has(n) && isPlaceholderBoneName(n))
             }
           }
           world.addChild(result.spine)
@@ -997,6 +1005,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
             atlasAvailableTags,
             activeAtlasTag,
             placeholderPolicyFrozen,
+            unknownPlaceholderNames,
           })
         } else {
           errors.push(result.message)
