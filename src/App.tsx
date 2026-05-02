@@ -1081,24 +1081,20 @@ function App() {
     setCommonAnimationNamesModalOpen(true)
   }, [])
 
-  // Re-validate animation names whenever the common list changes.
+  // Per-row unknown animation list whenever the common list or loaded spines change.
   useEffect(() => {
     const known = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
-    const updatedNames: string[] = []
-    const newIssues: ValidationIssue[] = []
     setSpineRows((prev) =>
       prev.map((row) => {
         if (known.length === 0) {
           if (row.unknownAnimationNames.length === 0) return row
           return { ...row, unknownAnimationNames: [] }
         }
-        const { issues, unknownNames } = validateLoadedSkeletonAnimations(
+        const { unknownNames } = validateLoadedSkeletonAnimations(
           row.displayName,
           row.spine,
           known,
         )
-        newIssues.push(...issues)
-        updatedNames.push(row.displayName)
         const prevUnknown = row.unknownAnimationNames
         if (
           prevUnknown.length === unknownNames.length &&
@@ -1109,17 +1105,47 @@ function App() {
         return { ...row, unknownAnimationNames: unknownNames }
       }),
     )
+  }, [commonAnimationNames])
+
+  // Merge placeholder-policy + animation-name-policy issues into Bundle validation whenever
+  // spines or common lists change. Fixes project reopen where report existed but policy lines were missing,
+  // and covers prev===null in older animation-only logic.
+  useEffect(() => {
+    if (spineRows.length === 0) return
+    const allowed = commonPlaceholderNames.map((t) => t.trim()).filter(Boolean)
+    const known = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
+    const policyIssues: ValidationIssue[] = []
+    for (const row of spineRows) {
+      if (allowed.length > 0) {
+        policyIssues.push(...validateLoadedSkeletonPlaceholders(row.displayName, row.spine, allowed))
+      }
+      if (known.length > 0) {
+        policyIssues.push(...validateLoadedSkeletonAnimations(row.displayName, row.spine, known).issues)
+      }
+    }
     setValidationReport((prev) => {
-      if (!prev) return prev
-      const base: SpineValidationReport = {
-        ...prev,
-        issues: prev.issues.filter(
-          (i) => !(i.issueKind === 'animation-name-policy'),
+      const base: SpineValidationReport =
+        prev ?? {
+          issues: [],
+          groups: [],
+          stats: {
+            totalFiles: importedFilesRef.current.length,
+            skeletonFiles: 0,
+            atlasFiles: 0,
+            rasterFiles: 0,
+            pairedGroups: 0,
+          },
+        }
+      const stripped = {
+        ...base,
+        issues: base.issues.filter(
+          (i) =>
+            i.issueKind !== 'placeholder-policy' && i.issueKind !== 'animation-name-policy',
         ),
       }
-      return newIssues.length > 0 ? mergeSpineValidationIssues(base, newIssues) : base
+      return policyIssues.length > 0 ? mergeSpineValidationIssues(stripped, policyIssues) : stripped
     })
-  }, [commonAnimationNames])
+  }, [spineRows, commonPlaceholderNames, commonAnimationNames])
 
   const addToCommonAnimationNames = useCallback((names: string[]) => {
     persistCommonAnimationNames([
@@ -1493,8 +1519,37 @@ function App() {
     projectFileHandleRef.current = handle
     await new Promise<void>((r) => setTimeout(r, 50))
 
+    setPendingUnknownAnims(null)
+    setPendingUnknownPlaceholders(null)
+
     importedFilesRef.current = assetFiles
     setBusy(true)
+
+    // Same as drag-drop import: rebuild Bundle validation from ZIP assets, then merge runtime policy issues.
+    setValidating(true)
+    let baseReport: SpineValidationReport
+    try {
+      baseReport = await validateSpineFiles(assetFiles)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      baseReport = {
+        issues: [{ severity: 'error', message: `Validation step failed: ${msg}` }],
+        groups: [],
+        stats: {
+          totalFiles: assetFiles.length,
+          skeletonFiles: 0,
+          atlasFiles: 0,
+          rasterFiles: 0,
+          pairedGroups: 0,
+        },
+      }
+    } finally {
+      setValidating(false)
+    }
+
+    // Bundle file/atlas pairing — policy rows are merged in useEffect when spineRows update.
+    setValidationReport(baseReport)
+
     const loadResult = await stageRef.current?.loadLocalFiles(assetFiles, {
       allowedPlaceholderBoneNames: commonPlaceholderNames,
     })
@@ -1507,6 +1562,33 @@ function App() {
 
     const { newInstances = [] } = loadResult
     const knownAnims = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
+
+    const knownAnimSet = new Set(knownAnims)
+    const animPromptEntries: UnknownAnimEntry[] = []
+    for (const inst of newInstances) {
+      const allAnimNames = inst.spine.skeleton.data.animations.map((a) => a.name)
+      const newToList = allAnimNames.filter((n) => !knownAnimSet.has(n))
+      if (newToList.length > 0) {
+        animPromptEntries.push({ displayName: inst.displayName, names: newToList })
+      }
+    }
+    if (animPromptEntries.length > 0) {
+      setPendingUnknownAnims(animPromptEntries)
+    }
+
+    const phPromptEntries: UnknownAnimEntry[] = []
+    for (const inst of newInstances) {
+      if (!inst.placeholderPolicyFrozen || !(inst.unknownPlaceholderNames?.length)) continue
+      const savedObj = project.objects.find((o) => o.displayName === inst.displayName)
+      if (savedObj?.placeholderPolicyIgnored) continue
+      phPromptEntries.push({
+        displayName: inst.displayName,
+        names: inst.unknownPlaceholderNames!,
+      })
+    }
+    if (phPromptEntries.length > 0) {
+      setPendingUnknownPlaceholders(phPromptEntries)
+    }
     const newRows = newInstances.map((inst) => ({
       ...inst,
       locked: false,
