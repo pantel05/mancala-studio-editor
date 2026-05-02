@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 const EXPORT_FILENAME = 'mancala-gaming-animation-names.json'
 
@@ -23,13 +23,22 @@ export function CommonAnimationNamesModal({
   const importInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [pendingName, setPendingName] = useState<string | null>(null)
+  const [listFilter, setListFilter] = useState('')
 
   useEffect(() => {
     if (!open) {
       setPendingName(null)
       setDraft('')
+      setListFilter('')
     }
   }, [open])
+
+  const filteredEntries = useMemo(() => {
+    const q = listFilter.trim().toLowerCase()
+    const mapped = names.map((name, index) => ({ name, index }))
+    if (q.length === 0) return mapped
+    return mapped.filter((e) => e.name.toLowerCase().includes(q))
+  }, [names, listFilter])
 
   useEffect(() => {
     if (!open) return
@@ -69,9 +78,9 @@ export function CommonAnimationNamesModal({
     setDraft('')
   }, [pendingName, names, onNamesChange])
 
-  const removeAt = useCallback(
-    (index: number) => {
-      onNamesChange(names.filter((_, i) => i !== index))
+  const removeAtIndex = useCallback(
+    (indexInFullList: number) => {
+      onNamesChange(names.filter((_, i) => i !== indexInFullList))
     },
     [names, onNamesChange],
   )
@@ -238,16 +247,30 @@ export function CommonAnimationNamesModal({
               {names.length === 0 ? (
                 <p className="editor-modal-empty">No names yet — add your first animation state name above.</p>
               ) : (
-                <ul className="editor-placeholder-name-list">
-                  {names.map((n, i) => (
-                    <li key={`${n}-${i}`} className="editor-placeholder-name-item">
-                      <code className="editor-placeholder-name-code">{n}</code>
-                      <button type="button" className="btn btn-sm" onClick={() => removeAt(i)}>
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <input
+                    type="search"
+                    className="editor-modal-input editor-common-list-filter"
+                    value={listFilter}
+                    onChange={(e) => setListFilter(e.target.value)}
+                    placeholder="Filter list…"
+                    aria-label="Filter animation state names"
+                  />
+                  {filteredEntries.length === 0 ? (
+                    <p className="editor-modal-empty">No names match your filter.</p>
+                  ) : (
+                    <ul className="editor-placeholder-name-list">
+                      {filteredEntries.map(({ name, index }) => (
+                        <li key={`${name}-${index}`} className="editor-placeholder-name-item">
+                          <code className="editor-placeholder-name-code">{name}</code>
+                          <button type="button" className="btn btn-sm" onClick={() => removeAtIndex(index)}>
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
             </div>
             <div className="editor-modal-foot editor-modal-foot--placeholders">

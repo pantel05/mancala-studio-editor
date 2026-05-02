@@ -17,31 +17,6 @@ export function ValidationPanel({ report, validating }: Props) {
         {validating && <span className="validation-status">Checking…</span>}
       </div>
 
-      <details className="validation-rules" open>
-        <summary className="validation-rules-summary">What this preview expects</summary>
-        <ul className="validation-rules-list">
-          <li>
-            One <strong>.json</strong> or <strong>.skel</strong> per Spine object, paired with{' '}
-            <strong>stem.atlas</strong> or <strong>stem@1x.atlas</strong> / <strong>stem@2x.atlas</strong> in the same
-            selection.
-          </li>
-          <li>
-            Every atlas page line must have a matching <strong>PNG</strong>, <strong>WebP</strong>, or{' '}
-            <strong>JPEG</strong> file (same filename as in the atlas).
-          </li>
-          <li>Drop the whole export folder when in doubt — unused files are reported as hints, not errors.</li>
-          <li>
-            <strong>Pairing / atlas</strong> errors (red) block that Spine object from loading. Other valid pairs still
-            load.
-          </li>
-          <li>
-            <strong>Placeholder name</strong> errors (red) still add the skeleton to the canvas in a{' '}
-            <strong>frozen</strong> state (no playback, drag, or placeholder attachments) until names match{' '}
-            <strong>Settings → Common placeholders</strong> or you fix the bones in Spine.
-          </li>
-        </ul>
-      </details>
-
       {report && (
         <div className="validation-results" role="region" aria-label="Validation results">
           <p className="validation-stats">

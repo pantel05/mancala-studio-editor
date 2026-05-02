@@ -920,25 +920,6 @@
   margin: 4px 0;
 }
 
-.editor-sidebar .validation-rules,
-.editor-console .validation-rules {
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: 2px;
-}
-
-.editor-sidebar .validation-rules-summary,
-.editor-console .validation-rules-summary {
-  font-size: 11px;
-}
-
-.editor-sidebar .validation-rules-list,
-.editor-console .validation-rules-list {
-  font-size: 11px;
-}
-
 .editor-sidebar .validation-results,
 .editor-console .validation-results {
   font-size: 11px;
@@ -1834,6 +1815,13 @@
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.editor-common-list-filter {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  box-sizing: border-box;
 }
 
 .editor-modal-input {
