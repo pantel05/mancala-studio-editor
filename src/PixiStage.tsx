@@ -2,6 +2,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
@@ -22,13 +23,17 @@ import type { NineSliceInsets, SpriteRow } from './SpriteRow'
 import { NineSliceGuide } from './pixi/nineSliceGuide'
 import { attachSpineToHostPlaceholder } from './pixi/placeholderAttachment'
 import {
+  pickPlaceholderBoneForLayout,
+  type PlaceholderLayoutKey,
+} from './spine/placeholderLayoutResolution'
+import {
   attachStageNavigation,
   paintBackdrop,
   type StageBackdropMode,
 } from './pixi/stageBackdropAndNav'
 import {
-  paintSafeFrameOverlay,
-  type SafeFramePreset,
+  computeWorldLayoutAuthoringPair,
+  paintWorldReferenceFrameOverlay,
 } from './pixi/safeFrameOverlay'
 import { snapWorldXY } from './pixi/snapWorldPosition'
 import { applySpineOriginAtRootBone } from './pixi/spineBoundingOrigin'
@@ -89,15 +94,16 @@ export type PlaceholderReconcileRow = {
   placeholderBindings: Record<string, string>
 }
 
-export type { SafeFramePreset }
-
 export type PixiStageProps = {
   backdropMode?: StageBackdropMode
   /** World-space grid + axes at (0,0); Spine anchor markers at skeleton roots. */
   showWorldGrid?: boolean
   onStageViewChange?: (scale: number) => void
-  /** Letterboxed device + inner safe rect in screen space (reference only). */
-  safeFramePreset?: SafeFramePreset
+  /**
+   * **main** — no device frame (open desktop canvas).
+   * **pt** / **ls** / **tb** — 1440p / QHD–class authoring frames in world space (9:16, 16:9, 4:3).
+   */
+  viewportLayoutTarget?: PlaceholderLayoutKey
   /** Increment when the set of Spine instances changes so hit targets are re-applied. */
   spineSceneRevision?: number
   /** Bump when a spine is swapped in-place (e.g. atlas @1x / @2x) so hit targets refresh. */
@@ -154,8 +160,15 @@ export type PixiStageHandle = {
    * last draws behind (background among spines).
    */
   syncHierarchyDrawOrder(spinesTopIsFront: Spine[]): void
-  /** Detach previous placeholder parents, then attach from current binding map. */
-  reconcilePlaceholderAttachments(rows: PlaceholderReconcileRow[]): void
+  /**
+   * Detach previous placeholder parents, then attach from current binding map.
+   * When the same child is bound to several layout-variant bones on one host, only one
+   * attachment is active; {@link PlaceholderLayoutKey} selects which bone to follow.
+   */
+  reconcilePlaceholderAttachments(
+    rows: PlaceholderReconcileRow[],
+    layoutTarget?: PlaceholderLayoutKey,
+  ): void
   /** Replace `oldSpine` in the world with `newSpine`, preserving transform and z-order. */
   swapSpineInstance(oldSpine: Spine, newSpine: Spine): void
   /** Live renderer / scene stats for the metrics overlay. */
@@ -231,6 +244,8 @@ function bringOverlayToFront(world: Container, overlay: Graphics) {
 }
 
 const OVERLAY_Z = 10_000
+/** World-space safe / layout frame draws above scene content so guides stay readable. */
+const SAFE_FRAME_WORLD_Z = 600_000
 
 type StageScreenDim = { w: number; h: number }
 
@@ -348,7 +363,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     backdropMode = 'dark',
     showWorldGrid = true,
     onStageViewChange,
-    safeFramePreset = 'off',
+    viewportLayoutTarget = 'main',
     spineSceneRevision = 0,
     atlasPreviewRevision = 0,
     onClearDragPointerTarget,
@@ -376,7 +391,16 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   const backdropModeRef = useRef(backdropMode)
   const showWorldGridRef = useRef(showWorldGrid)
   const onViewRef = useRef(onStageViewChange)
-  const safeFramePresetRef = useRef(safeFramePreset)
+  const viewportLayoutTargetRef = useRef(viewportLayoutTarget)
+  /** Wheel zoom / pan on `world` — remembered per layout tab so Main vs Portrait etc. stay independent. */
+  const stageViewByLayoutRef = useRef<
+    Partial<Record<PlaceholderLayoutKey, { scale: number; x: number; y: number }>>
+  >({})
+  /** Last layout for which we applied {@link stageViewByLayoutRef} camera state (see layout swap effect). */
+  const cameraLayoutRef = useRef<PlaceholderLayoutKey>(viewportLayoutTarget)
+  const commitActiveLayoutStageViewRef = useRef<() => void>(() => {})
+  /** True after the Pixi world exists — replays camera if the user switched layout before boot finished. */
+  const [pixiWorldReady, setPixiWorldReady] = useState(false)
   const drawMeterRef = useRef<WebGlDrawCallMeter | null>(null)
   const nineSliceGuideRef = useRef<NineSliceGuide | null>(null)
   /** Last known renderer logical size — keeps world origin pinned to viewport center on resize. */
@@ -406,7 +430,13 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   backdropModeRef.current = backdropMode
   showWorldGridRef.current = showWorldGrid
   onViewRef.current = onStageViewChange
-  safeFramePresetRef.current = safeFramePreset
+  viewportLayoutTargetRef.current = viewportLayoutTarget
+  commitActiveLayoutStageViewRef.current = () => {
+    const w = worldRef.current
+    if (!w) return
+    const L = viewportLayoutTargetRef.current
+    stageViewByLayoutRef.current[L] = { scale: w.scale.x, x: w.x, y: w.y }
+  }
   clearDragPointerTargetRef.current = onClearDragPointerTarget
   onSpineCanvasPointerDownRef.current = onSpineCanvasPointerDown
   getSpineDragEnabledRef.current = getSpineDragEnabled
@@ -554,7 +584,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
       const safeFrameG = new Graphics()
       safeFrameG.eventMode = 'none'
-      safeFrameG.zIndex = 50_000
+      safeFrameG.zIndex = SAFE_FRAME_WORLD_Z
 
       worldRef.current = world
       centerShellRef.current = centerShell
@@ -566,12 +596,12 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       application.stage.addChildAt(backdrop, 0)
       application.stage.sortableChildren = true
       application.stage.addChild(centerShell)
-      application.stage.addChild(safeFrameG)
 
       centerShell.addChild(world)
 
       world.addChild(worldGrid)
       world.addChild(overlay)
+      world.addChild(safeFrameG)
 
       stageScreenSizeRef.current = { w: 0, h: 0 }
       syncViewportCenterShell(application, host, centerShell, stageScreenSizeRef)
@@ -598,7 +628,11 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         backdrop,
         {
           getBackdropMode: () => backdropModeRef.current,
-          onViewChange: (s) => onViewRef.current?.(s),
+          onViewChange: (s) => {
+            commitActiveLayoutStageViewRef.current()
+            onViewRef.current?.(s)
+          },
+          onPanEnd: () => commitActiveLayoutStageViewRef.current(),
           onBackdropLeftPointerDown: () => clearDragPointerTargetRef.current?.(),
         },
       )
@@ -634,20 +668,21 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
       application.ticker.add(() => {
         const sf = safeFrameRef.current
-        if (sf) {
-          paintSafeFrameOverlay(
-            sf,
-            application.screen.width,
-            application.screen.height,
-            safeFramePresetRef.current,
-          )
+        const wld = worldRef.current
+        if (sf && wld) {
+          const vw = application.screen.width
+          const vh = application.screen.height
+          const layout = viewportLayoutTargetRef.current
+          const pair =
+            layout === 'main' ? null : computeWorldLayoutAuthoringPair(layout, 5)
+          if (pair) paintWorldReferenceFrameOverlay(sf, wld, vw, vh, pair)
+          else sf.clear()
         }
 
         const o = overlayRef.current
         if (o) o.clear()
 
         const wg = worldGridRef.current
-        const wld = worldRef.current
         const appLive = appRef.current
         const hostLive = hostRef.current
         if (wg && wld && appLive && hostLive) {
@@ -668,12 +703,14 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       })
 
       ensureAllSpinesInteractive(world)
+      setPixiWorldReady(true)
     }
 
     void boot()
 
     return () => {
       cancelled = true
+      setPixiWorldReady(false)
       hostResizeObserver?.disconnect()
       hostResizeObserver = null
       disposeStageResize?.()
@@ -710,8 +747,38 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   }, [])
 
   useEffect(() => {
-    safeFramePresetRef.current = safeFramePreset
-  }, [safeFramePreset])
+    viewportLayoutTargetRef.current = viewportLayoutTarget
+  }, [viewportLayoutTarget])
+
+  useLayoutEffect(() => {
+    const world = worldRef.current
+    const centerShell = centerShellRef.current
+    const application = appRef.current
+    const hostEl = hostRef.current
+    if (!world || !centerShell || !application || !hostEl || !pixiWorldReady) return
+
+    const from = cameraLayoutRef.current
+    const to = viewportLayoutTarget
+    if (from === to) return
+
+    stageViewByLayoutRef.current[from] = {
+      scale: world.scale.x,
+      x: world.x,
+      y: world.y,
+    }
+    const saved = stageViewByLayoutRef.current[to]
+    if (saved) {
+      world.scale.set(saved.scale)
+      world.position.set(saved.x, saved.y)
+    } else {
+      world.scale.set(1)
+      world.position.set(0, 0)
+      stageScreenSizeRef.current = { w: 0, h: 0 }
+      syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
+    }
+    cameraLayoutRef.current = to
+    onViewRef.current?.(world.scale.x)
+  }, [viewportLayoutTarget, pixiWorldReady])
 
   useEffect(() => {
     const app = appRef.current
@@ -737,6 +804,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       world.position.set(0, 0)
       stageScreenSizeRef.current = { w: 0, h: 0 }
       syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
+      commitActiveLayoutStageViewRef.current()
       onViewRef.current?.(1)
     },
 
@@ -758,19 +826,32 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       applyHierarchyZOrder(world, spinesTopIsFront)
     },
 
-    reconcilePlaceholderAttachments(rows: PlaceholderReconcileRow[]) {
+    reconcilePlaceholderAttachments(
+      rows: PlaceholderReconcileRow[],
+      layoutTarget: PlaceholderLayoutKey = 'main',
+    ) {
       const world = worldRef.current
       if (!world) return
       for (const fn of placeholderDetachRef.current.values()) fn()
       placeholderDetachRef.current.clear()
       const byId = new Map(rows.map((r) => [r.id, r.spine]))
       for (const row of rows) {
+        const childToBones = new Map<string, string[]>()
         for (const [bone, childId] of Object.entries(row.placeholderBindings)) {
           if (!childId) continue
+          if (!childToBones.has(childId)) childToBones.set(childId, [])
+          childToBones.get(childId)!.push(bone)
+        }
+        for (const [childId, bones] of childToBones) {
+          const existing = bones.filter((b) => !!row.spine.skeleton.findBone(b))
+          const bone =
+            pickPlaceholderBoneForLayout(existing.length > 0 ? existing : bones, layoutTarget) ??
+            bones[0]
+          if (!bone) continue
           const child = byId.get(childId)
           if (!child) continue
           const { detach } = attachSpineToHostPlaceholder(row.spine, bone, child, world)
-          placeholderDetachRef.current.set(`${row.id}::${bone}`, detach)
+          placeholderDetachRef.current.set(`${row.id}::${childId}`, detach)
         }
       }
     },
@@ -847,6 +928,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         world.position.set(0, 0)
         stageScreenSizeRef.current = { w: 0, h: 0 }
         syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
+        commitActiveLayoutStageViewRef.current()
         onViewRef.current?.(1)
         return
       }
@@ -873,6 +955,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         world.position.set(0, 0)
         stageScreenSizeRef.current = { w: 0, h: 0 }
         syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
+        commitActiveLayoutStageViewRef.current()
         onViewRef.current?.(1)
         return
       }
@@ -891,6 +974,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       world.position.set(-cx * scale, -cy * scale)
       stageScreenSizeRef.current = { w: 0, h: 0 }
       syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
+      commitActiveLayoutStageViewRef.current()
       onViewRef.current?.(scale)
     },
 

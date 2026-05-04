@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,7 +11,6 @@ import {
 import {
   PixiStage,
   type PixiStageHandle,
-  type SafeFramePreset,
   type StageBackdropMode,
 } from './PixiStage'
 import {
@@ -50,6 +50,7 @@ import type { Spine } from '@esotericsoftware/spine-pixi-v8'
 import {
   applySceneSnapshot,
   captureSceneSnapshot,
+  effectiveRootSpineScale,
   SCENE_HISTORY_MAX,
   snapshotsEqual,
   type SceneSnapshot,
@@ -57,6 +58,21 @@ import {
 import { spineRowsAfterRemoval } from './scene/spineRowsAfterRemoval'
 import { ViewportMetricsOverlay } from './ViewportMetricsOverlay'
 import { applyPlaceholderBinding } from './spine/applyPlaceholderBindingState'
+import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
+
+const VIEWPORT_LAYOUT_WATERMARK: Record<PlaceholderLayoutKey, string> = {
+  main: 'Main view',
+  pt: 'Portrait view',
+  ls: 'Landscape view',
+  tb: 'Tablet view',
+}
+
+const INSPECTOR_LAYOUT_BADGE: Record<PlaceholderLayoutKey, string> = {
+  main: 'MAIN',
+  pt: 'PT',
+  ls: 'LS',
+  tb: 'TB',
+}
 import { filesByLowerName, findAtlasFileForStemTag } from './spine/findAtlasForStem'
 import { loadSpineFromFileGroup } from './spine/loadSpineFromFileGroup'
 import './App.css'
@@ -322,6 +338,17 @@ function App() {
   const selectedSpriteIdRef = useRef(selectedSpriteId)
   useEffect(() => { selectedSpriteIdRef.current = selectedSpriteId }, [selectedSpriteId])
 
+  /** Kept in sync with {@link placeholderLayoutTarget} for undo capture + drag end (declared before undo hooks). */
+  const placeholderLayoutTargetRef = useRef<PlaceholderLayoutKey>('main')
+  /**
+   * Which layout target selects among paired placeholder bones on a rig (e.g. `_ls` vs `_pt` / `_pr`).
+   * Matches `project.json` → `viewport.placeholderLayoutTarget`.
+   */
+  const [placeholderLayoutTarget, setPlaceholderLayoutTarget] = useState<PlaceholderLayoutKey>('main')
+  useEffect(() => {
+    placeholderLayoutTargetRef.current = placeholderLayoutTarget
+  }, [placeholderLayoutTarget])
+
   const undoStackRef = useRef<SceneSnapshot[]>([])
   const redoStackRef = useRef<SceneSnapshot[]>([])
   const [historyTick, setHistoryTick] = useState(0)
@@ -335,7 +362,9 @@ function App() {
   }, [])
 
   const pushUndoSnapshot = useCallback(() => {
-    pushUndoSnapshotFrom(captureSceneSnapshot(spineRowsRef.current))
+    pushUndoSnapshotFrom(
+      captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current),
+    )
   }, [pushUndoSnapshotFrom])
 
   const undo = useCallback(() => {
@@ -345,9 +374,11 @@ function App() {
     undoStackRef.current = u.slice(0, -1)
     redoStackRef.current = [
       ...redoStackRef.current.slice(-(SCENE_HISTORY_MAX - 1)),
-      captureSceneSnapshot(spineRowsRef.current),
+      captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current),
     ]
-    setSpineRows(applySceneSnapshot(spineRowsRef.current, restore))
+    setSpineRows(
+      applySceneSnapshot(spineRowsRef.current, restore, placeholderLayoutTargetRef.current),
+    )
     setHistoryTick((t) => t + 1)
   }, [])
 
@@ -358,28 +389,144 @@ function App() {
     redoStackRef.current = r.slice(0, -1)
     undoStackRef.current = [
       ...undoStackRef.current.slice(-(SCENE_HISTORY_MAX - 1)),
-      captureSceneSnapshot(spineRowsRef.current),
+      captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current),
     ]
-    setSpineRows(applySceneSnapshot(spineRowsRef.current, restore))
+    setSpineRows(
+      applySceneSnapshot(spineRowsRef.current, restore, placeholderLayoutTargetRef.current),
+    )
     setHistoryTick((t) => t + 1)
   }, [])
 
   const onSpineDragStartForHistory = useCallback(() => {
-    dragHistoryBeforeRef.current = captureSceneSnapshot(spineRowsRef.current)
+    dragHistoryBeforeRef.current = captureSceneSnapshot(
+      spineRowsRef.current,
+      placeholderLayoutTargetRef.current,
+    )
   }, [])
 
   const onSpineDragEndForHistory = useCallback(() => {
     const before = dragHistoryBeforeRef.current
     dragHistoryBeforeRef.current = null
     if (!before) return
-    const after = captureSceneSnapshot(spineRowsRef.current)
+    const after = captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current)
     if (!snapshotsEqual(before, after)) {
       pushUndoSnapshotFrom(before)
+      const layout = placeholderLayoutTargetRef.current
+      if (layout === 'main') {
+        setSpineRows((prev) =>
+          prev.map((r) => {
+            if (r.pinnedUnder) return r
+            const ap = after.positions[r.id]
+            if (!ap) return r
+            const bp = before.positions[r.id]
+            if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            return { ...r, canonicalWorld: { x: ap.x, y: ap.y } }
+          }),
+        )
+      } else if (layout === 'pt') {
+        setSpineRows((prev) =>
+          prev.map((r) => {
+            if (r.pinnedUnder) return r
+            const ap = after.positions[r.id]
+            if (!ap) return r
+            const bp = before.positions[r.id]
+            if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            return { ...r, layoutPt: { ...(r.layoutPt ?? {}), x: ap.x, y: ap.y } }
+          }),
+        )
+      } else if (layout === 'ls') {
+        setSpineRows((prev) =>
+          prev.map((r) => {
+            if (r.pinnedUnder) return r
+            const ap = after.positions[r.id]
+            if (!ap) return r
+            const bp = before.positions[r.id]
+            if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            return { ...r, layoutLs: { ...(r.layoutLs ?? {}), x: ap.x, y: ap.y } }
+          }),
+        )
+      } else if (layout === 'tb') {
+        setSpineRows((prev) =>
+          prev.map((r) => {
+            if (r.pinnedUnder) return r
+            const ap = after.positions[r.id]
+            if (!ap) return r
+            const bp = before.positions[r.id]
+            if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            return { ...r, layoutTb: { ...(r.layoutTb ?? {}), x: ap.x, y: ap.y } }
+          }),
+        )
+      }
     }
   }, [pushUndoSnapshotFrom])
 
+  /** Persist root world pose into canonical (Main) or portrait override after inspector / scrub. */
+  const syncRootSpineLayoutStore = useCallback((rowId: string) => {
+    const row = spineRowsRef.current.find((r) => r.id === rowId)
+    const stage = stageRef.current
+    if (!row || row.pinnedUnder || !stage) return
+    const pos = stage.getSpineWorldPosition(row.spine)
+    if (!pos) return
+    const layout = placeholderLayoutTargetRef.current
+    setSpineRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId || r.pinnedUnder) return r
+        if (layout === 'main') return { ...r, canonicalWorld: { x: pos.x, y: pos.y } }
+        if (layout === 'pt') return { ...r, layoutPt: { ...(r.layoutPt ?? {}), x: pos.x, y: pos.y } }
+        if (layout === 'ls') return { ...r, layoutLs: { ...(r.layoutLs ?? {}), x: pos.x, y: pos.y } }
+        if (layout === 'tb') return { ...r, layoutTb: { ...(r.layoutTb ?? {}), x: pos.x, y: pos.y } }
+        return r
+      }),
+    )
+  }, [])
+
+  /** Apply per-layout world pose + display scale on the stage when switching layout or after row updates. */
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const layout = placeholderLayoutTarget
+    /** Must use `spineRows` here — `spineRowsRef` updates in useEffect *after* layout, so the ref would be stale on this commit. */
+    for (const row of spineRows) {
+      if (!row.pinnedUnder) {
+        const cw = row.canonicalWorld ?? { x: row.spine.x, y: row.spine.y }
+        if (layout === 'main') {
+          stage.setSpineWorldPlacementXY(row.spine, cw.x, cw.y)
+        } else if (layout === 'pt') {
+          const t = row.layoutPt ?? cw
+          stage.setSpineWorldPlacementXY(row.spine, t.x, t.y)
+        } else if (layout === 'ls') {
+          const t = row.layoutLs ?? cw
+          stage.setSpineWorldPlacementXY(row.spine, t.x, t.y)
+        } else if (layout === 'tb') {
+          const t = row.layoutTb ?? cw
+          stage.setSpineWorldPlacementXY(row.spine, t.x, t.y)
+        }
+      }
+      const sx = effectiveRootSpineScale(row, layout)
+      row.spine.scale.set(sx, sx)
+    }
+  }, [placeholderLayoutTarget, spineRows])
+
+  /** Persist root uniform display scale for the active layout tab (see inspector “Display scale”). */
+  const onRootDisplayScaleChange = useCallback((rowId: string, scale: number) => {
+    const layout = placeholderLayoutTargetRef.current
+    setSpineRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId || r.pinnedUnder) return r
+        if (layout === 'main') return { ...r, canonicalScale: scale }
+        if (layout === 'pt') return { ...r, layoutPtScale: scale }
+        if (layout === 'ls') return { ...r, layoutLsScale: scale }
+        if (layout === 'tb') return { ...r, layoutTbScale: scale }
+        return r
+      }),
+    )
+  }, [])
+
   const onWorldPositionEditBegin = useCallback(() => {
-    worldPositionEditBeforeRef.current = captureSceneSnapshot(spineRowsRef.current)
+    worldPositionEditBeforeRef.current = captureSceneSnapshot(
+      spineRowsRef.current,
+      placeholderLayoutTargetRef.current,
+    )
   }, [])
 
   const onWorldPositionEditEnd = useCallback(
@@ -387,7 +534,7 @@ function App() {
       const before = worldPositionEditBeforeRef.current
       worldPositionEditBeforeRef.current = null
       if (!committed || !before) return
-      const after = captureSceneSnapshot(spineRowsRef.current)
+      const after = captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current)
       if (!snapshotsEqual(before, after)) {
         pushUndoSnapshotFrom(before)
       }
@@ -419,7 +566,6 @@ function App() {
   const [stageScale, setStageScale] = useState(1)
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(false)
   const [showWorldGrid, setShowWorldGrid] = useState(true)
-  const [safeFramePreset, setSafeFramePreset] = useState<SafeFramePreset>('off')
   /** Canvas pick highlight (inspector); synced with hierarchy or direct canvas click on a skeleton. */
   const [canvasDragSpineId, setCanvasDragSpineId] = useState<string | null>(null)
 
@@ -646,8 +792,9 @@ function App() {
         spine: r.spine,
         placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
       })),
+      placeholderLayoutTarget,
     )
-  }, [spineRows])
+  }, [spineRows, placeholderLayoutTarget])
 
   const onPlaceholderBind = useCallback(
     (hostRowId: string, boneName: string, childRowId: string | null) => {
@@ -909,6 +1056,8 @@ function App() {
             placeholderBindings: {},
             pinnedUnder: null,
             unknownAnimationNames: unknownNames,
+            canonicalWorld: { x: inst.spine.x, y: inst.spine.y },
+            canonicalScale: inst.spine.scale.x,
           }
         })
         if (animIssues.length > 0) {
@@ -1340,6 +1489,7 @@ function App() {
           spine: r.spine,
           placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
         })),
+        placeholderLayoutTarget,
       )
       stageRef.current?.removeSpine(row.spine)
       spineHandleById.current.delete(rowId)
@@ -1348,7 +1498,7 @@ function App() {
       setSelectedSpineId((sel) => (sel === rowId ? null : sel))
       setCanvasDragSpineId((id) => (id === rowId ? null : id))
     },
-    [busy],
+    [busy, placeholderLayoutTarget],
   )
 
   const removeSpriteFromProject = useCallback(
@@ -1410,6 +1560,7 @@ function App() {
     setCanvasDragSpineId(null)
     setSelectedSpineId(null)
     setSelectedSpriteId(null)
+    setPlaceholderLayoutTarget('main')
     setOpenTitlebarMenu(null)
     projectFileHandleRef.current = null
     undoStackRef.current = []
@@ -1438,9 +1589,9 @@ function App() {
     spriteRows,
     importedFiles: importedFilesRef.current,
     backdropMode,
-    safeFramePreset,
+    placeholderLayoutTarget,
     layerOrder,
-  }), [spineRows, spriteRows, layerOrder, backdropMode, safeFramePreset])
+  }), [spineRows, spriteRows, layerOrder, backdropMode, placeholderLayoutTarget])
 
   const onSaveProject = useCallback(async () => {
     if (spineRows.length === 0 && spriteRows.length === 0) {
@@ -1512,7 +1663,12 @@ function App() {
 
     // Apply viewport settings
     setBackdropMode(project.viewport.backdropMode as Parameters<typeof setBackdropMode>[0])
-    setSafeFramePreset(project.viewport.safeFramePreset as Parameters<typeof setSafeFramePreset>[0])
+    {
+      const plt = project.viewport.placeholderLayoutTarget
+      setPlaceholderLayoutTarget(
+        plt === 'main' || plt === 'pt' || plt === 'ls' || plt === 'tb' ? plt : 'main',
+      )
+    }
 
     // clearScene() resets projectFileHandleRef to null, so restore the handle afterwards
     clearScene()
@@ -1599,6 +1755,8 @@ function App() {
       placeholderBindings: {},
       pinnedUnder: null,
       unknownAnimationNames: [] as string[],
+      canonicalWorld: { x: inst.spine.x, y: inst.spine.y },
+      canonicalScale: inst.spine.scale.x,
     }))
     setSpineRows(newRows)
     // Initialise layerOrder with spine rows — will be overwritten when sprites are restored below
@@ -1629,6 +1787,25 @@ function App() {
                   .map((a) => a.name)
                   .filter((n) => !knownAnims.includes(n))
               : [],
+          canonicalWorld: saved.pinnedUnder
+            ? undefined
+            : { x: saved.position.x, y: saved.position.y },
+          layoutPt:
+            saved.pinnedUnder || !saved.layoutPt?.position
+              ? undefined
+              : { x: saved.layoutPt.position.x, y: saved.layoutPt.position.y },
+          layoutLs:
+            saved.pinnedUnder || !saved.layoutLs?.position
+              ? undefined
+              : { x: saved.layoutLs.position.x, y: saved.layoutLs.position.y },
+          layoutTb:
+            saved.pinnedUnder || !saved.layoutTb?.position
+              ? undefined
+              : { x: saved.layoutTb.position.x, y: saved.layoutTb.position.y },
+          canonicalScale: saved.pinnedUnder ? undefined : saved.scale,
+          layoutPtScale: saved.pinnedUnder ? undefined : saved.layoutPtScale,
+          layoutLsScale: saved.pinnedUnder ? undefined : saved.layoutLsScale,
+          layoutTbScale: saved.pinnedUnder ? undefined : saved.layoutTbScale,
         }
       }),
     )
@@ -2156,16 +2333,24 @@ function App() {
                 </select>
               </label>
               <label className="editor-field-inline">
-                <span className="editor-field-label">Safe frame</span>
+                <span
+                  className="editor-field-label"
+                  title="Main: open canvas, no device frame; nested symbols use unsuffixed / main placeholder bones. Portrait / Landscape / Tablet: 1440p / QHD–class world frames (1440×2560, 2560×1440, 2560×1920 tablet 4:3) + paired placeholder bones (e.g. name_ls vs name_pt). Watermark top-left."
+                >
+                  Layouts
+                </span>
                 <select
                   className="editor-select"
-                  value={safeFramePreset}
-                  onChange={(e) => setSafeFramePreset(e.target.value as SafeFramePreset)}
-                  title="Reference device aspect + 5% inset (not tied to a specific phone)"
+                  value={placeholderLayoutTarget}
+                  onChange={(e) =>
+                    setPlaceholderLayoutTarget(e.target.value as PlaceholderLayoutKey)
+                  }
+                  aria-label="Layouts: paired placeholder bone for nested symbols"
                 >
-                  <option value="off">Off</option>
-                  <option value="phone-portrait">Phone portrait</option>
-                  <option value="phone-landscape">Phone landscape</option>
+                  <option value="main">Main (unsuffixed / desktop)</option>
+                  <option value="pt">Portrait (pt / pr)</option>
+                  <option value="ls">Landscape (ls)</option>
+                  <option value="tb">Tablet (tb)</option>
                 </select>
               </label>
               <button type="button" className="btn btn-compact" onClick={resetCanvasView}>
@@ -2238,7 +2423,7 @@ function App() {
               backdropMode={backdropMode}
               showWorldGrid={showWorldGrid}
               onStageViewChange={setStageScale}
-              safeFramePreset={safeFramePreset}
+              viewportLayoutTarget={placeholderLayoutTarget}
               spineSceneRevision={spineRows.length}
               atlasPreviewRevision={atlasPreviewRevision}
               onClearDragPointerTarget={() => { setCanvasDragSpineId(null) }}
@@ -2251,6 +2436,16 @@ function App() {
               onSpriteDragStart={onSpriteDragStartForHistory}
               onSpriteDragEnd={onSpriteDragEndForHistory}
             />
+            <div
+              className={
+                placeholderLayoutTarget === 'main'
+                  ? 'editor-viewport-layout-watermark'
+                  : `editor-viewport-layout-watermark editor-viewport-layout-watermark--${placeholderLayoutTarget}`
+              }
+              aria-hidden="true"
+            >
+              {VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]}
+            </div>
             {showMetricsOverlay ? (
               <ViewportMetricsOverlay
                 stageRef={stageRef}
@@ -2273,8 +2468,18 @@ function App() {
         />
 
         <aside className="editor-inspector" aria-label="Inspector">
-          <div className="editor-inspector-header">
-            <span className="editor-inspector-title">Inspector</span>
+          <div
+            className={`editor-inspector-header editor-inspector-header--layout-${placeholderLayoutTarget}`}
+          >
+            <div className="editor-inspector-header-top">
+              <span className="editor-inspector-title">Inspector</span>
+              <span
+                className={`editor-inspector-layout-badge editor-inspector-layout-badge--${placeholderLayoutTarget}`}
+                title="Active layout target (same as Layouts in the viewport toolbar). Affects placeholder bones and per-layout pose / scale for root spines."
+              >
+                {INSPECTOR_LAYOUT_BADGE[placeholderLayoutTarget]}
+              </span>
+            </div>
             {(selectedRow ?? selectedSpriteRow) && (
               <span className="editor-inspector-subtitle" title={(selectedRow ?? selectedSpriteRow)!.displayName}>
                 {(selectedRow ?? selectedSpriteRow)!.displayName}
@@ -2301,8 +2506,11 @@ function App() {
                       onToggleCanvasDragPick={() => toggleCanvasDragPickForRow(row.id)}
                       allRows={spineRows}
                       onPlaceholderBind={onPlaceholderBind}
+                      placeholderLayoutTarget={placeholderLayoutTarget}
                       onWorldPositionEditBegin={onWorldPositionEditBegin}
                       onWorldPositionEditEnd={onWorldPositionEditEnd}
+                      onAfterRootWorldPositionChange={syncRootSpineLayoutStore}
+                      onRootDisplayScaleChange={onRootDisplayScaleChange}
                       onIgnorePlaceholderPolicy={() => ignoreSpinePlaceholderPolicy(row.id)}
                       onAddToCommonAnimations={addToCommonAnimationNames}
                     />

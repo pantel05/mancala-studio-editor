@@ -28,7 +28,7 @@ function niceStep(raw: number): number {
 }
 
 /** Visible world-space axis-aligned bounds from screen corners (handles pan/zoom only). */
-function visibleWorldBounds(
+export function visibleWorldBounds(
   world: Container,
   screenW: number,
   screenH: number,

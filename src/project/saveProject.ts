@@ -25,7 +25,10 @@ export type SaveProjectInput = {
   /** All files currently loaded in the session (skeleton + atlas + textures). */
   importedFiles: File[]
   backdropMode: StageBackdropMode
-  safeFramePreset: SafeFramePreset
+  /** Legacy field; always written as `off`. Older projects may still list phone presets — ignored at load. */
+  safeFramePreset?: SafeFramePreset
+  /** Which layout drives `_ls` / `_pt` / … placeholder bone selection. */
+  placeholderLayoutTarget?: 'main' | 'pt' | 'ls' | 'tb'
   /** Unified draw order: IDs from both rows and spriteRows (front to back). */
   layerOrder?: string[]
 }
@@ -100,7 +103,15 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 async function buildZip(input: SaveProjectInput): Promise<JSZip> {
-  const { rows, spriteRows, importedFiles, backdropMode, safeFramePreset, layerOrder } = input
+  const {
+    rows,
+    spriteRows,
+    importedFiles,
+    backdropMode,
+    layerOrder,
+    placeholderLayoutTarget = 'main',
+  } = input
+  const safeFramePreset = input.safeFramePreset ?? 'off'
   const zip = new JSZip()
   const assetsFolder = zip.folder('assets')!
 
@@ -158,13 +169,20 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     const skin = spine.skeleton.skin?.name ?? null
     const boneOffset = row.pinnedUnder ? { x: spine.position.x, y: spine.position.y } : null
 
+    const mainWorld =
+      !row.pinnedUnder && row.canonicalWorld
+        ? { x: row.canonicalWorld.x, y: row.canonicalWorld.y }
+        : { x: spine.x, y: spine.y }
+
+    const mainScale = row.pinnedUnder ? spine.scale.x : row.canonicalScale ?? spine.scale.x
+
     return {
       id: row.id,
       displayName: row.displayName,
       skeletonFile: row.skeletonSourceFile?.name ?? '',
       activeAtlasTag: row.activeAtlasTag ?? '',
-      position: { x: spine.x, y: spine.y },
-      scale: spine.scale.x,
+      position: mainWorld,
+      scale: mainScale,
       layerVisible: row.layerVisible,
       locked: row.locked,
       animation,
@@ -178,6 +196,24 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
         ? { hostId: row.pinnedUnder.hostRowId, boneName: row.pinnedUnder.boneName }
         : null,
       placeholderPolicyIgnored: row.placeholderPolicyIgnored,
+      ...(row.pinnedUnder || !row.layoutPt
+        ? {}
+        : { layoutPt: { position: { x: row.layoutPt.x, y: row.layoutPt.y } } }),
+      ...(row.pinnedUnder || !row.layoutLs
+        ? {}
+        : { layoutLs: { position: { x: row.layoutLs.x, y: row.layoutLs.y } } }),
+      ...(row.pinnedUnder || !row.layoutTb
+        ? {}
+        : { layoutTb: { position: { x: row.layoutTb.x, y: row.layoutTb.y } } }),
+      ...(row.pinnedUnder || row.layoutPtScale == null
+        ? {}
+        : { layoutPtScale: row.layoutPtScale }),
+      ...(row.pinnedUnder || row.layoutLsScale == null
+        ? {}
+        : { layoutLsScale: row.layoutLsScale }),
+      ...(row.pinnedUnder || row.layoutTbScale == null
+        ? {}
+        : { layoutTbScale: row.layoutTbScale }),
     }
   })
 
@@ -210,7 +246,7 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     version: PROJECT_FORMAT_VERSION,
     app: 'MANCALA GAMING STUDIO EDITOR',
     savedAt: new Date().toISOString(),
-    viewport: { backdropMode, safeFramePreset },
+    viewport: { backdropMode, safeFramePreset, placeholderLayoutTarget },
     objects,
     sprites,
     layerOrder: resolvedLayerOrder,

@@ -9,6 +9,7 @@ Local desktop-style editor to preview, validate, and synchronize **Spine** asset
 ## How we maintain this document
 
 - **v1 (below)** is the original MVP definition; it is **complete** in the current codebase.
+- **v2** and **v3** roadmap sections below track planned expansion; update them when scope shifts.
 - **Whenever you add or change user-visible behavior**, update this file in the same change (or immediately after):
   - Append a row to **[Feature changelog](#feature-changelog)** (date, short title, 1–2 lines).
   - If the addition is substantial, extend **[Source material for in-app Help](#source-material-for-in-app-help-future)** so the future Help page stays accurate with minimal rework.
@@ -150,6 +151,8 @@ Show results in a **simple panel**.
 
 The project is evolving from a Spine previewer into a **full internal studio layout tool** for Mancala Gaming. Designers compose scenes visually; developers consume the exported scene data directly in the game engine.
 
+**Studio priority (v2):** **Multi-target layouts** (**main** desktop reference + **pt** / **ls** / **tb**) are the **top** v2 focus — ship this workflow before leaning hard into additional asset types or export breadth, unless a hard dependency forces a small exception (product/engineering call).
+
 ### Vision
 
 A local-only, browser-based scene editor where a **game designer** can:
@@ -158,6 +161,8 @@ A local-only, browser-based scene editor where a **game designer** can:
 - Export a **scene JSON** that developers load directly in the PixiJS game
 
 ### Planned asset types (priority order)
+
+*Sequencing vs layouts: the table below is **feature** priority among asset types; **multi-target layouts** (above) still come **first** in overall v2 delivery unless explicitly reprioritized.*
 
 | Asset type | Description | Effort |
 |------------|-------------|--------|
@@ -181,12 +186,78 @@ A single **scene JSON** file that captures all objects:
 
 Developers parse this JSON and reconstruct the scene in the game engine. Since it's internal, the format is owned by the studio and can evolve freely.
 
+### Multi-target layouts (main + pt / ls / tb) — planned, **v2 main priority**
+
+**Audience:** Tech art takes a **saved project** from game design and authors **layout variants** without overwriting the designers’ baseline.
+
+**Layout targets**
+
+| Key | Mode | Fixed aspect (authoring frame; no dynamic device detection) |
+|-----|------|---------------------------------------------------------------|
+| *(main)* | **PC / desktop** — reference scene from designers | Matches current editor / main scene behavior |
+| **pt** | Mobile **portrait** | **9:16** |
+| **ls** | Mobile **landscape** | **16:9** |
+| **tb** | Tablet | **TBD** (e.g. 4:3 vs 16:10 — decide against primary shipped tablet profile) |
+
+**Rules**
+
+- **Main** stays the **reference**: positions, scale, rotation, and other stored layout parameters for the desktop scene **do not change** when editing variants.
+- **pt / ls / tb** store **per-target overrides** for the **same project instances** (reuse assets from the project; tech art may **add** instances or assets as the scene model allows). Editing **pt** does not alter **main**, **ls**, or **tb**.
+- The existing **Game view / render area** stays the primary workspace; the user must always see **which layout target is active** (**main**, **pt**, **ls**, **tb**). **Control placement is TBD** (e.g. segmented buttons in the **viewport toolbar**, extra **tabs** above the canvas, or **app title bar**) — pick during a short UX pass so it stays canvas-adjacent and does not fight **Safe frame** / future tabs.
+- **Per-layout visibility:** Hierarchy (and equivalent instance list) reflects **visibility per active layout target** — e.g. an instance **visible** in **main** can be **hidden** in **pt** without removing it from the project. Persist visibility in the same per-target override model as transforms.
+- **Screenshots:** Tech art can **capture the current layout** (the active target’s framed preview) to disk or clipboard — for reviews and handoff. Format and shortcut TBD; must stay **local-only** like the rest of the product.
+- **`@1x` / `@2x` atlas stems:** Spine bundle loading, pairing, and validation for **resolution-suffixed atlases** must behave **identically** in **all** layout modes; switching **main / pt / ls / tb** must **not** break atlas resolution or re-pairing. Any future “preferred resolution” UI remains orthogonal to the layout frame.
+
+**Scene export (when variants ship):** Extend the planned scene JSON (or `.mancala` project shape) with a **per-target** block: transforms, visibility, and any other agreed layout fields — keyed by stable **instance IDs** shared across targets.
+
+**Effort (indicative):** **Medium–High** — depends on project save format, instance identity, undo scope per target, and export schema agreement with the game.
+
 ### Design decisions to make before building
 
 1. **Asset referencing** — filenames are sufficient for internal use; agree on a folder/naming convention
 2. **Rotation** — needed for sprites and text (not yet in the editor); add before static sprite support
 3. **Multi-select** — useful once many objects are on screen; can defer to after first working export
 4. **Scene file persistence** — save/load a `.scene.json` locally so designers can continue work across sessions
+5. **Instance IDs** — stable identifiers for each scene instance across **main + pt + ls + tb** so overrides never attach to the wrong object after duplicate/rename/undo
+6. **Variant seeding** — e.g. first open of **pt**: copy from **main** vs empty frame; offer **“reset this target to main”** (per instance or whole target) for recovery
+7. **Screenshot scope** — full framed view vs transparent background; PNG vs WebP; single-target vs optional “capture all targets” batch (later)
+8. **Playback state vs layout** — document whether animation choice / transport is **global** or **per target** for v1 of multi-target (global is simpler)
+9. **Tablet (`tb`) ratio** — lock when product picks primary hardware profile; document in changelog and Help when fixed
+10. **Layout target control placement** — deferred: viewport toolbar vs tabs above canvas vs app top bar; requirement is **obvious active target** + minimal conflict with **Safe frame** and any future **Game**-column tabs
+
+---
+
+## v3 Roadmap — Animation workflows, instances, asset refresh, video export, and Spine tooling
+
+Internal-facing features prioritized by the studio for **timing QA**, **layout iteration**, **iterative art drops**, and **review deliverables**. Not started — scope for planning only; implementation order may differ.
+
+### Goals
+
+- **Choreographed playback** across multiple Spine instances (delays, ordered steps).
+- **Multiple placements** of the same skeleton asset without re-importing files.
+- **Non-destructive refresh** when animation delivers updated exports while preserving scene pose.
+- **Offline-friendly video output** for animation sequences (labels, local file).
+- **Spine asset insight / optimization (exploratory)** — see row below; **high risk** unless scoped to analysis-first.
+- **Timeline event → other instances (preview)** — see **Timeline event triggers** row; choreographs playback from authored Spine event keys without editing exports.
+
+### Planned capabilities
+
+| Feature | Description | Effort (indicative) |
+|---------|-------------|---------------------|
+| **Animation scenarios** | Define ordered steps: pick instance → animation → optional delay (ms) → next step (possibly another instance). Run/pause under a single scenario clock for real-time timing checks. Optional persistence in `.mancala` later. | **Medium** |
+| **Timeline event triggers (Inspector)** | **Preview-only** (does not modify Spine files): use the Spine runtime’s **`AnimationState` event** callbacks on the **selected** instance. **Inspector:** a **toggle** (switch) to enable listening on this object; a **read-only reference list** of **timeline event names** defined on this skeleton (and optionally which animations use them / key times); **rules** where the user picks **which event** (dropdown, required when many events exist), **target instance** (another loaded row), **animation to play**, and **loop**. **Multiple rules** allow one event to start several animations on **different** Spine objects, or different events to drive different targets. Optional **live “last fired”** line for confidence during playback. Wiring uses the same event names the game listens for; optional persistence of rules in `.mancala` aligned with **duplicate instance** identity (target by editor row / id, not only asset filename). | **Medium** |
+| **Duplicate Spine instance** | From an existing row (e.g. `sym-01`), spawn another instance sharing the same asset bundle; independent transform, inspector, and hierarchy row. Place on grid beside the original. | **Low–Medium** |
+| **Update / reload Spine in place** | Replace skeleton + atlas + textures for an existing object while preserving world position, scale, rotation, nesting/placeholder bindings where still valid; surface validation when bones or animations change names. | **Medium–High** |
+| **Video export (single skeleton)** | Encode a sequence: animation 1 → animation 2 → … on one Spine; optional caption with animation name per segment; download to disk (codec/format TBD — e.g. WebM first). | **High** |
+| **Spine “optimizer” / export health** | **Risky, high effort** if it rewrites files: skeleton JSON/skel, `.atlas`, and images must stay internally consistent and version-compatible; automatic atlas repack, pruning bones/animations, or re-encoding images can break motion or game integration with little warning. **Preferred direction:** an **analysis + recommendations** tool first (sizes, unused regions, heuristics, export checklist); any **write** path should be **opt-in**, **preview/diff**, and **save as new bundle**—not silent overwrite. | **High** (higher still for repack / aggressive rewrite) |
+
+### v3 notes / open decisions
+
+1. **Scenarios** — v1 can be editor-only playback; saving scenario definitions with the project is a follow-up.
+2. **Video** — resolution, FPS, transparency, and Safari/codec support need explicit product choices; likely start with one format and one browser target.
+3. **Reload** — clarify behavior when skeleton structure diverges (missing bones, renamed placeholders) vs. texture-only or animation-only changes.
+4. **Spine optimizer** — treat as **optional** v3 item; **risk and engineering cost are substantial** for anything beyond reporting. Defer file mutation until there is a defined verification story (reload in editor, diff, QA sign-off).
+5. **Timeline event triggers** — distinct from **animation scenarios** (time-based steps vs. **reactive** firing when a timeline key is crossed). Document that **scrubbing** vs **continuous play** can differ slightly from game behavior; recommend **Play** for faithful checks. If two animations share the **same event name**, v1 rules typically match **by name only**; filtering “only when current animation is X” is a later enhancement.
 
 ---
 
@@ -220,6 +291,11 @@ _Add a new row for every user-visible addition or important behavior change._
 
 | Date | Summary | Notes |
 |------|---------|-------|
+| 2026-05-03 | **v2 studio priority:** layouts first | **Multi-target layouts** are the **primary** v2 delivery focus; other v2 scope (extra asset types, export) follows unless a dependency overrides. |
+| 2026-05-03 | **v2 Roadmap:** multi-target layouts + screenshots + per-target visibility | **main** = PC/desktop reference (unchanged when editing variants); **pt** (9:16), **ls** (16:9), **tb** (ratio TBD) = per-target transforms + **hierarchy visibility** overrides; reuse/add project assets; **active target must be obvious** — **control placement TBD** (design decision §10); **screenshots** per layout for tech-art handoff; **`@1x` / `@2x`** atlas behavior must remain correct in every layout mode. Scene export to carry per-target blocks when implemented. |
+| 2026-05-02 | **v3 Roadmap:** timeline event triggers | **Timeline event triggers (Inspector):** preview-only cross-instance playback driven by Spine timeline events — toggle, event reference list, per-rule mapping (event → target instance → animation + loop), multiple rules and multiple targets; optional `.mancala` persistence; note vs scenarios and scrub caveat. |
+| 2026-05-02 | **v3 Roadmap:** Spine optimizer note | Added **Spine “optimizer” / export health** as a **high-effort, high-risk** optional item: prefer analysis/recommendations first; file rewrite needs opt-in, preview, and new-bundle export. |
+| 2026-05-02 | **v3 Roadmap** section in MVP_SCOPE | Planned: animation scenarios (multi-instance + delays), duplicate Spine instances, in-place skeleton reload preserving pose, single-skeleton video export with animation name captions. |
 | 2026-05-02 | Common lists: filter search field | **Settings → Common placeholders** and **Common Animation States** modals include a case-insensitive “Filter list…” search above the name list; **Remove** uses the real list index so it stays correct while filtering. Filter resets when the modal closes. |
 | 2026-05-02 | Validation panel: drop static “What this preview expects” block | Bundle validation UI now shows only the stats line (when a report exists), severity counts, and the issue list — the collapsible rules copy lives in **Help** only. |
 | 2026-05-02 | Project reopen restores Bundle validation + prompts | Opening a `.mancala` runs `validateSpineFiles` on ZIP assets, shows the same unknown-animation / unknown-placeholder prompts as a fresh import (placeholder prompt skipped when saved with Inspector **Ignore**). Placeholder + animation **policy** lines are merged in a dedicated `useEffect` whenever `spineRows` or common lists change, so the validation panel stays correct after reopen (avoids relying on a single load-path merge and `prev === null` in the old animation-only effect). |
@@ -271,6 +347,24 @@ You can drop **multiple skeletons** and their atlases/images together. The tool 
 - Choose **animation**, **Play / Pause / Restart**, **loop**, and **playback speed**.
 - Adjust **canvas scale** for that instance’s display size on the stage.
 - Options such as **locking** drag, **visibility**, **draw order**, and **placeholder** workflows exist for advanced rigs—see on-screen labels.
+
+### Multi-target layouts (v2 — planned, **studio priority**)
+
+For **tech art handoff**, a future release may let you open a **saved project** from design and author **separate layout targets** on top of the same instances (this is the **main planned expansion** after the current previewer baseline):
+
+- **Main** — **PC / desktop** scene: the **reference** layout from designers. Editing other targets does **not** change **main**.
+- **pt** (portrait), **ls** (landscape), **tb** (tablet) — fixed **preview frames** (**9:16**, **16:9**, and a **tablet** ratio still to be decided). For each target you can **move, scale, and tune** instances independently. The **hierarchy** can show an instance **visible** in one target and **hidden** in another. **How you pick the active target** (toolbar, tabs, or elsewhere) is not fixed yet — the app will make the **current target** obvious.
+- **Screenshots** — capture the **current** framed layout for reviews (local save; details TBD).
+- **`@1x` / `@2x` atlases** — the same Spine **resolution-variant** rules as today should keep working no matter which layout target you are editing.
+
+### Timeline event triggers (v3 — planned)
+
+Some rigs fire **timeline events** from Spine (keys on the animation timeline) so the **game code** can react—play another animation, play a sound, etc. In a future release, the Inspector may offer **preview-only** **timeline event triggers**:
+
+- A **switch** on the selected instance to **listen** for those events during playback.
+- A **list of event names** on this skeleton (reference so designers know what they can hook).
+- **Rules:** for each rule, choose **which event**, **which other loaded instance**, **which animation** to start (and **loop**). **Several rules** can target **different** Spine rows from the **same** event.
+- This **does not edit** Spine exports; it mimics how developers subscribe to `AnimationState` **event** callbacks in code. Behavior during **scrubbing** may not match **continuous play** exactly—use **Play** for timing checks aligned with the runtime.
 
 ### Global transport (toolbar)
 

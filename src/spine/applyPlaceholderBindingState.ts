@@ -1,7 +1,19 @@
+import { placeholderBonesShareLayoutGroup } from './placeholderLayoutResolution'
+
 export type PlaceholderBindingAwareRow = {
   id: string
   placeholderBindings: Record<string, string>
   pinnedUnder: null | { hostRowId: string; boneName: string }
+}
+
+function otherHostBindingsForChild(
+  bindings: Record<string, string>,
+  boneName: string,
+  childId: string,
+): string[] {
+  return Object.entries(bindings)
+    .filter(([b, id]) => id === childId && b !== boneName)
+    .map(([b]) => b)
 }
 
 /**
@@ -25,8 +37,11 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
   const host = rows.find((r) => r.id === hostRowId)!
   const prevChildId = host.placeholderBindings[boneName] ?? null
 
-  if (prevChildId && prevChildId !== childRowId) {
-    rows = rows.map((r) => (r.id === prevChildId ? { ...r, pinnedUnder: null } : r))
+  if (childRowId && prevChildId && prevChildId !== childRowId) {
+    const stillOnHost = otherHostBindingsForChild(host.placeholderBindings, boneName, prevChildId)
+    if (stillOnHost.length === 0) {
+      rows = rows.map((r) => (r.id === prevChildId ? { ...r, pinnedUnder: null } : r))
+    }
   }
 
   if (childRowId) {
@@ -43,12 +58,14 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
         rows = rows.map((r) => (r.id === childRowId ? { ...r, pinnedUnder: null } : r))
       } else if (child.pinnedUnder.boneName !== boneName) {
         const oldBone = child.pinnedUnder.boneName
-        rows = rows.map((r) => {
-          if (r.id !== hostRowId) return r
-          const nb = { ...r.placeholderBindings }
-          delete nb[oldBone]
-          return { ...r, placeholderBindings: nb }
-        })
+        if (!placeholderBonesShareLayoutGroup(oldBone, boneName)) {
+          rows = rows.map((r) => {
+            if (r.id !== hostRowId) return r
+            const nb = { ...r.placeholderBindings }
+            delete nb[oldBone]
+            return { ...r, placeholderBindings: nb }
+          })
+        }
       }
     }
   }
@@ -60,6 +77,21 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
     else delete nb[boneName]
     return { ...r, placeholderBindings: nb }
   })
+
+  if (!childRowId && prevChildId) {
+    const hostAfter = rows.find((r) => r.id === hostRowId)!
+    const remaining = Object.entries(hostAfter.placeholderBindings)
+      .filter(([, id]) => id === prevChildId)
+      .map(([b]) => b)
+    rows = rows.map((r) => {
+      if (r.id !== prevChildId) return r
+      if (remaining.length === 0) return { ...r, pinnedUnder: null }
+      if (r.pinnedUnder?.hostRowId === hostRowId) {
+        return { ...r, pinnedUnder: { hostRowId, boneName: [...remaining].sort()[0]! } }
+      }
+      return r
+    })
+  }
 
   if (childRowId) {
     rows = rows.map((r) =>

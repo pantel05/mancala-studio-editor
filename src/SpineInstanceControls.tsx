@@ -14,6 +14,7 @@ import type { Attachment } from '@esotericsoftware/spine-core'
 import type { Spine } from '@esotericsoftware/spine-pixi-v8'
 import type { PixiStageHandle } from './PixiStage'
 import { pickIdleAnimationName } from './spine/pickIdleAnimation'
+import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
 import type { SkeletonPlaceholderInfo } from './spine/scanSkeletonPlaceholders'
 import { snapWorldScalar } from './pixi/snapWorldPosition'
 
@@ -21,7 +22,7 @@ function isCanvasDragPickTargetIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
   return Boolean(
     target.closest(
-      'button, input, select, textarea, option, .spine-field, .spine-toolbar, details, .spine-draw-order, .spine-placeholders-block, .spine-placeholder-bind, .spine-placeholder-row, .spine-world-position-readout',
+      'button, input, select, textarea, option, .spine-field, .spine-toolbar, details, .spine-draw-order, .spine-placeholders-block, .spine-placeholder-bind, .spine-placeholder-row, .spine-world-position-readout, .spine-scale-readout',
     ),
   )
 }
@@ -71,6 +72,30 @@ export type SpineControlRow = {
   /** When this instance is parented under another skeleton’s placeholder bone. */
   pinnedUnder: null | { hostRowId: string; boneName: string }
   /**
+   * Root only: world placement for **Main** layout (canonical). Synced while editing Main;
+   * used to restore the skeleton when leaving Portrait.
+   */
+  canonicalWorld?: { x: number; y: number }
+  /**
+   * Root only: world placement override for **Portrait** layout. When unset, portrait uses {@link canonicalWorld} / main.
+   */
+  layoutPt?: { x: number; y: number }
+  /** Root only: world placement override for **Landscape** layout. When unset, ls uses {@link canonicalWorld}. */
+  layoutLs?: { x: number; y: number }
+  /** Root only: world placement override for **Tablet** layout. When unset, tb uses {@link canonicalWorld}. */
+  layoutTb?: { x: number; y: number }
+  /**
+   * Root only: uniform **display scale** (Pixi `spine.scale`) for **Main** — matches project JSON `scale`.
+   * Other layouts may override with {@link layoutPtScale} / {@link layoutLsScale} / {@link layoutTbScale}.
+   */
+  canonicalScale?: number
+  /** Root only: portrait display scale; inherits {@link canonicalScale} when unset. */
+  layoutPtScale?: number
+  /** Root only: landscape display scale override. */
+  layoutLsScale?: number
+  /** Root only: tablet display scale override. */
+  layoutTbScale?: number
+  /**
    * Animation names present on this skeleton that are NOT in the Common Animation States list.
    * Empty when the list is empty (validation disabled) or all names are known.
    */
@@ -109,6 +134,8 @@ function useAxisScrub(
   onEditBegin: (() => void) | undefined,
   onEditEnd: ((committed: boolean) => void) | undefined,
   sensitivity = 1,
+  /** Snap / clamp scrub output (defaults to world half-pixel snapping). */
+  snapAxis: (v: number) => number = snapWorldScalar,
 ) {
   const scrubRef = useRef<{
     startX: number
@@ -124,10 +151,12 @@ function useAxisScrub(
   const onChangeRef = useRef(onChange)
   const onEditBeginRef = useRef(onEditBegin)
   const onEditEndRef = useRef(onEditEnd)
+  const snapAxisRef = useRef(snapAxis)
   onBeginRef.current = onBegin
   onChangeRef.current = onChange
   onEditBeginRef.current = onEditBegin
   onEditEndRef.current = onEditEnd
+  snapAxisRef.current = snapAxis
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
@@ -159,7 +188,7 @@ function useAxisScrub(
         document.body.style.cursor = 'ew-resize'
         document.body.style.userSelect = 'none'
       }
-      onChangeRef.current(snapWorldScalar(s.startValue + delta), s.companion)
+      onChangeRef.current(snapAxisRef.current(s.startValue + delta), s.companion)
     },
     [sensitivity],
   )
@@ -291,12 +320,20 @@ export const SpineInstanceControls = forwardRef<
     allRows?: SpineControlRow[]
     /** Attach or clear a symbol skeleton on a placeholder bone of this row’s skeleton. */
     onPlaceholderBind?: (hostRowId: string, boneName: string, childRowId: string | null) => void
+    /** Which layout tab is active — drives which stored scale field is edited for root instances. */
+    placeholderLayoutTarget?: PlaceholderLayoutKey
     /** When false, skip per-frame position polling (hidden inspector panes). */
     inspectorActive?: boolean
     /** Capture scene snapshot before inspector-driven world move (undo). */
     onWorldPositionEditBegin?: () => void
     /** After a placement apply attempt; `committed` is whether the stage applied the move. */
     onWorldPositionEditEnd?: (committed: boolean) => void
+    /**
+     * After a successful **root** world move (scrub / typed placement). Used to persist Main vs Portrait poses.
+     */
+    onAfterRootWorldPositionChange?: (rowId: string) => void
+    /** Root only: uniform Pixi `spine.scale` for the active layout tab (Main vs pt / ls / tb). */
+    onRootDisplayScaleChange?: (rowId: string, scale: number) => void
     /** User pressed Ignore on the frozen banner — unfreeze but keep error visible. */
     onIgnorePlaceholderPolicy?: () => void
     /**
@@ -313,14 +350,20 @@ export const SpineInstanceControls = forwardRef<
     onToggleCanvasDragPick,
     allRows = [],
     onPlaceholderBind,
+    placeholderLayoutTarget = 'main',
     inspectorActive = false,
     onWorldPositionEditBegin,
     onWorldPositionEditEnd,
+    onAfterRootWorldPositionChange,
+    onRootDisplayScaleChange,
     onIgnorePlaceholderPolicy,
     onAddToCommonAnimations,
   },
   ref,
 ) {
+  /** Shown on inspector labels so the active layout target (viewport dropdown) is obvious. */
+  const layoutBracket = `(${placeholderLayoutTarget.toUpperCase()})`
+
   const names = useMemo(
     () => row.spine.skeleton.data.animations.map((a) => a.name),
     [row.spine],
@@ -348,6 +391,27 @@ export const SpineInstanceControls = forwardRef<
   const [speed, setSpeed] = useState(1)
   const [playing, setPlaying] = useState(false)
   const [sceneScale, setSceneScale] = useState(() => row.spine.scale.x)
+  const [scaleEdit, setScaleEdit] = useState<string | null>(null)
+  const displayScaleForLayout = useMemo(() => {
+    if (row.pinnedUnder) return row.spine.scale.x
+    const c = row.canonicalScale ?? row.spine.scale.x
+    if (placeholderLayoutTarget === 'main') return c
+    if (placeholderLayoutTarget === 'pt') return row.layoutPtScale ?? c
+    if (placeholderLayoutTarget === 'ls') return row.layoutLsScale ?? c
+    return row.layoutTbScale ?? c
+  }, [
+    row.pinnedUnder,
+    row.spine.scale.x,
+    row.canonicalScale,
+    row.layoutPtScale,
+    row.layoutLsScale,
+    row.layoutTbScale,
+    placeholderLayoutTarget,
+  ])
+  useEffect(() => {
+    if (scaleEdit !== null) return
+    setSceneScale(displayScaleForLayout)
+  }, [displayScaleForLayout, scaleEdit])
   const [scrubTime, setScrubTime] = useState(0)
   const [skinSelect, setSkinSelect] = useState(() => {
     const sk = row.spine.skeleton.skin
@@ -716,7 +780,7 @@ export const SpineInstanceControls = forwardRef<
     return (
       <details className="spine-placeholders-block" open>
         <summary className="spine-placeholders-summary">
-          Placeholders ({row.placeholders.length})
+          Placeholders ({row.placeholders.length}) {layoutBracket}
         </summary>
         <p className="spine-placeholder-help">
           Convention-driven bones (see <code className="spine-inline-code">placeholderConvention.ts</code>). Pick
@@ -746,7 +810,7 @@ export const SpineInstanceControls = forwardRef<
                 ) : null}
               </div>
               <label className="spine-placeholder-bind">
-                <span className="spine-field-label">Attach symbol</span>
+                <span className="spine-field-label">Attach symbol {layoutBracket}</span>
                 <select
                   className="spine-select"
                   value={boundId ?? ''}
@@ -766,9 +830,10 @@ export const SpineInstanceControls = forwardRef<
         })}
       </details>
     )
-  }, [allRows, onPlaceholderBind, row])
+  }, [allRows, onPlaceholderBind, row, placeholderLayoutTarget])
 
   const transportLocked = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
+  const scaleInspectorDisabled = row.locked || transportLocked
 
   const isPinned = Boolean(row.pinnedUnder)
   /** Disabled for locked/frozen spines AND for nested children (world position is bone-driven). */
@@ -785,6 +850,7 @@ export const SpineInstanceControls = forwardRef<
   useEffect(() => {
     setWorldEdit(null)
     setBoneOffsetEdit(null)
+    setScaleEdit(null)
   }, [row.id])
 
   const worldEditRef = useRef(worldEdit)
@@ -807,6 +873,14 @@ export const SpineInstanceControls = forwardRef<
     Boolean(boneOffsetEdit),
   )
 
+  const onWorldPosScrubEditEnd = useCallback(
+    (committed: boolean) => {
+      onWorldPositionEditEnd?.(committed)
+      if (committed && !row.pinnedUnder) onAfterRootWorldPositionChange?.(row.id)
+    },
+    [onWorldPositionEditEnd, onAfterRootWorldPositionChange, row.id, row.pinnedUnder],
+  )
+
   // ── Click-drag scrub for world position and bone offset axes ────────────────
   const worldXScrub = useAxisScrub(
     worldPosDisabled,
@@ -818,7 +892,7 @@ export const SpineInstanceControls = forwardRef<
       viewportStageRef?.current?.setSpineWorldPlacementXY(row.spine, newX, frozenY)
     },
     onWorldPositionEditBegin,
-    onWorldPositionEditEnd,
+    onWorldPosScrubEditEnd,
   )
 
   const worldYScrub = useAxisScrub(
@@ -831,7 +905,7 @@ export const SpineInstanceControls = forwardRef<
       viewportStageRef?.current?.setSpineWorldPlacementXY(row.spine, frozenX, newY)
     },
     onWorldPositionEditBegin,
-    onWorldPositionEditEnd,
+    onWorldPosScrubEditEnd,
   )
 
   const boneXScrub = useAxisScrub(
@@ -858,6 +932,105 @@ export const SpineInstanceControls = forwardRef<
     },
     onWorldPositionEditBegin,
     onWorldPositionEditEnd,
+  )
+
+  const snapSpineDisplayScale = useCallback((v: number) => Math.max(0.01, Math.round(v * 1000) / 1000), [])
+
+  const scaleScrub = useAxisScrub(
+    scaleInspectorDisabled,
+    () => {
+      const v = row.spine.scale.x
+      return { value: v, companion: v }
+    },
+    (newVal, _companion) => {
+      const clamped = snapSpineDisplayScale(newVal)
+      setSceneScale(clamped)
+      row.spine.scale.set(clamped, clamped)
+      if (!row.pinnedUnder) onRootDisplayScaleChange?.(row.id, clamped)
+    },
+    undefined,
+    undefined,
+    0.1,
+    snapSpineDisplayScale,
+  )
+
+  const scaleInputRef = useRef<HTMLInputElement | null>(null)
+  const skipScaleBlurRef = useRef(false)
+
+  const commitScaleDisplay = useCallback(() => {
+    if (scaleEdit === null) return
+    const v = parseInspectorWorldCoord(scaleEdit)
+    if (v !== null) {
+      const clamped = Math.max(0.01, snapSpineDisplayScale(v))
+      setSceneScale(clamped)
+      row.spine.scale.set(clamped, clamped)
+      if (!row.pinnedUnder) onRootDisplayScaleChange?.(row.id, clamped)
+    }
+    setScaleEdit(null)
+  }, [scaleEdit, row.spine, row.pinnedUnder, row.id, onRootDisplayScaleChange, snapSpineDisplayScale])
+
+  useLayoutEffect(() => {
+    if (scaleEdit === null) return
+    scaleInputRef.current?.focus()
+    scaleInputRef.current?.select()
+  }, [scaleEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const displayScaleBlock = (
+    <div className="spine-field spine-world-position-field spine-world-position-field--scale">
+      <span
+        className="spine-field-label"
+        title="Uniform display size (Pixi scale). Per layout tab for root instances; double-click or drag the value."
+      >
+        Scale {layoutBracket}
+      </span>
+      <div className="spine-world-position-values">
+        {scaleEdit !== null ? (
+          <label className="spine-world-position-edit">
+            <input
+              ref={scaleInputRef}
+              type="text"
+              inputMode="decimal"
+              disabled={scaleInspectorDisabled}
+              className="spine-world-position-input"
+              value={scaleEdit}
+              onChange={(e) => setScaleEdit(e.target.value)}
+              onBlur={() => {
+                if (skipScaleBlurRef.current) {
+                  skipScaleBlurRef.current = false
+                  return
+                }
+                commitScaleDisplay()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  skipScaleBlurRef.current = true
+                  commitScaleDisplay()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  skipScaleBlurRef.current = true
+                  setScaleEdit(null)
+                }
+              }}
+            />
+          </label>
+        ) : (
+          <span
+            role="button"
+            tabIndex={scaleInspectorDisabled ? -1 : 0}
+            className="spine-world-position-readout spine-scale-readout"
+            onDoubleClick={() => !scaleInspectorDisabled && setScaleEdit(sceneScale.toFixed(3))}
+            onPointerDown={scaleScrub.handlePointerDown}
+            onPointerMove={scaleScrub.handlePointerMove}
+            onPointerUp={scaleScrub.handlePointerUp}
+            onPointerCancel={scaleScrub.handlePointerCancel}
+            title={scaleInspectorDisabled ? undefined : 'Drag to scrub · Double-click to type'}
+          >
+            {sceneScale.toFixed(3)}
+          </span>
+        )}
+      </div>
+    </div>
   )
 
   /** Only when opening an axis — not on every draft keystroke (would re-`select()` and trap the caret). */
@@ -897,8 +1070,17 @@ export const SpineInstanceControls = forwardRef<
     onWorldPositionEditBegin?.()
     const ok = stage.setSpineWorldPlacementXY(row.spine, nx, ny)
     onWorldPositionEditEnd?.(ok)
+    if (ok && !row.pinnedUnder) onAfterRootWorldPositionChange?.(row.id)
     setWorldEdit(null)
-  }, [viewportStageRef, row.spine, onWorldPositionEditBegin, onWorldPositionEditEnd])
+  }, [
+    viewportStageRef,
+    row.spine,
+    row.pinnedUnder,
+    row.id,
+    onWorldPositionEditBegin,
+    onWorldPositionEditEnd,
+    onAfterRootWorldPositionChange,
+  ])
 
   const onWorldPosKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
@@ -992,8 +1174,8 @@ export const SpineInstanceControls = forwardRef<
   }, [commitBoneOffsetEdit])
 
   const worldPositionBlock = (
-    <div className="spine-field spine-world-position-field">
-      <span className="spine-field-label">World position</span>
+    <div className="spine-field spine-world-position-field spine-world-position-field--world">
+      <span className="spine-field-label">World position {layoutBracket}</span>
       <div
         className="spine-world-position-values"
         aria-live="polite"
@@ -1087,10 +1269,17 @@ export const SpineInstanceControls = forwardRef<
     </div>
   )
 
+  const worldPositionWithScaleRow = (
+    <div className="spine-world-scale-row">
+      {worldPositionBlock}
+      {displayScaleBlock}
+    </div>
+  )
+
   const boneOffsetBlock = isPinned ? (
     <div className="spine-field spine-world-position-field">
       <span className="spine-field-label">
-        Bone offset{' '}
+        Bone offset {layoutBracket}{' '}
         <span className="spine-field-label-hint">(relative to placeholder bone)</span>
       </span>
       <div
@@ -1218,12 +1407,12 @@ export const SpineInstanceControls = forwardRef<
             <span className="spine-controls-badge">Skeleton</span>
           </div>
         </div>
-        {worldPositionBlock}
+        {worldPositionWithScaleRow}
         {boneOffsetBlock}
-        <p className="spine-controls-empty">This skeleton has no animations.</p>
+        <p className="spine-controls-empty">This skeleton has no animations. {layoutBracket}</p>
         {skinEntries.length > 0 && (
           <label className="spine-field">
-            <span className="spine-field-label">Skin</span>
+            <span className="spine-field-label">Skin {layoutBracket}</span>
             <select
               className="spine-select"
               value={skinSelect}
@@ -1241,7 +1430,9 @@ export const SpineInstanceControls = forwardRef<
         )}
         {slotNames.length > 0 && (
           <details className="spine-slots-block">
-            <summary className="spine-slots-summary">Slots ({slotNames.length})</summary>
+            <summary className="spine-slots-summary">
+              Slots ({slotNames.length}) {layoutBracket}
+            </summary>
             <div className="spine-slots-scroll">
               {[...slotNames].sort().map((sn) => (
                 <label key={sn} className="spine-slot-row">
@@ -1259,18 +1450,6 @@ export const SpineInstanceControls = forwardRef<
             </div>
           </details>
         )}
-        <label className="spine-field">
-          <span className="spine-field-label">Canvas scale {sceneScale.toFixed(2)}×</span>
-          <input
-            type="range"
-            className="spine-range"
-            min={0.05}
-            max={2}
-            step={0.05}
-            value={sceneScale}
-            onChange={(e) => setSceneScale(Number(e.target.value))}
-          />
-        </label>
         {placeholdersPanel}
       </div>
     )
@@ -1310,10 +1489,10 @@ export const SpineInstanceControls = forwardRef<
         </div>
       </div>
       <div className="spine-controls-body">
-        {worldPositionBlock}
+        {worldPositionWithScaleRow}
         {boneOffsetBlock}
         <label className="spine-field">
-          <span className="spine-field-label">Animation</span>
+          <span className="spine-field-label">Animation {layoutBracket}</span>
           <select
             className="spine-select"
             value={anim}
@@ -1330,7 +1509,7 @@ export const SpineInstanceControls = forwardRef<
 
         {skinEntries.length > 0 && (
           <label className="spine-field">
-            <span className="spine-field-label">Skin</span>
+            <span className="spine-field-label">Skin {layoutBracket}</span>
             <select
               className="spine-select"
               value={skinSelect}
@@ -1371,11 +1550,13 @@ export const SpineInstanceControls = forwardRef<
             checked={loop}
             onChange={(e) => onLoopChange(e.target.checked)}
           />
-          <span>Loop</span>
+          <span>Loop {layoutBracket}</span>
         </label>
 
         <label className="spine-field">
-          <span className="spine-field-label">Speed {speed.toFixed(2)}×</span>
+          <span className="spine-field-label">
+            Speed {layoutBracket} {speed.toFixed(2)}×
+          </span>
           <input
             type="range"
             className="spine-range"
@@ -1391,7 +1572,7 @@ export const SpineInstanceControls = forwardRef<
         {trackDuration > 0 && (
           <label className="spine-field spine-field-block">
             <span className="spine-field-label">
-              Time {scrubTime.toFixed(2)}s / {trackDuration.toFixed(2)}s
+              Time {layoutBracket} {scrubTime.toFixed(2)}s / {trackDuration.toFixed(2)}s
             </span>
             <input
               type="range"
@@ -1408,7 +1589,9 @@ export const SpineInstanceControls = forwardRef<
 
         {slotNames.length > 0 && (
           <details className="spine-slots-block">
-            <summary className="spine-slots-summary">Slots ({slotNames.length})</summary>
+            <summary className="spine-slots-summary">
+              Slots ({slotNames.length}) {layoutBracket}
+            </summary>
             <div className="spine-slots-scroll">
               {[...slotNames].sort().map((sn) => (
                 <label key={sn} className="spine-slot-row">
@@ -1427,18 +1610,6 @@ export const SpineInstanceControls = forwardRef<
           </details>
         )}
 
-        <label className="spine-field">
-          <span className="spine-field-label">Canvas scale {sceneScale.toFixed(2)}×</span>
-          <input
-            type="range"
-            className="spine-range"
-            min={0.05}
-            max={2}
-            step={0.05}
-            value={sceneScale}
-            onChange={(e) => setSceneScale(Number(e.target.value))}
-          />
-        </label>
       </div>
       {placeholdersPanel}
     </div>

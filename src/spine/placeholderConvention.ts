@@ -2,6 +2,8 @@
  * Which skeleton bones count as “placeholders” for tooling (inspector list, attach symbols, naming checks).
  * Adjust these rules when your studio’s naming convention is finalized; grammar / typo checks can build on
  * {@link isPlaceholderBoneName} later.
+ *
+ * For paired layout bones (`*_ls`, `*_pt`, `*_pr`, …), see `placeholderLayoutResolution.ts`.
  */
 
 const PLACEHOLDER_SUBSTRINGS = ['placeholder', 'place_holder', 'pholder'] as const

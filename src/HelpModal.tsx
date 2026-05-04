@@ -438,10 +438,10 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   using the backdrop button in the title bar. Useful for checking how characters look on different backgrounds.
                 </p>
 
-                <h3 className="help-section-title">Safe frame overlay</h3>
+                <h3 className="help-section-title">Layouts (device frames)</h3>
                 <p className="help-p">
-                  Select a safe frame preset (e.g. 16:9, 4:3) from the title bar to overlay a frame guide on the canvas.
-                  This helps position characters within the visible game area.
+                  Use the <strong>Layouts</strong> control in the Game view toolbar. <strong>Main</strong> is an open desktop canvas (no fixed device rectangle).
+                  <strong>Portrait</strong>, <strong>Landscape</strong>, and <strong>Tablet</strong> overlay a world-space reference frame sized for <strong>1440p / QHD</strong> (9:16 portrait, 16:9 landscape, and a 4:3 tablet rectangle at the same scale) that zooms and pans with your scene so you can check composition. A small watermark in the corner shows the active layout.
                 </p>
               </>
             )}
@@ -465,7 +465,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <li>Layer order (combined for both Spine and sprite objects), visibility, and lock state</li>
                   <li>Placeholder bindings (which child is attached to which bone)</li>
                   <li>Ignored placeholder policy flags</li>
-                  <li>Backdrop mode and safe frame preset</li>
+                  <li>Backdrop mode and active layout target (Main / Portrait / Landscape / Tablet)</li>
                 </ul>
 
                 <h3 className="help-section-title">What is NOT saved</h3>

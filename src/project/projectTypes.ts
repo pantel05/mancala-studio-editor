@@ -13,9 +13,24 @@ export type ProjectObject = {
   skeletonFile: string
   /** Which atlas tag was active when saved ('' = default, '1x', '2x'). */
   activeAtlasTag: string
-  /** World position of the placement anchor. */
+  /** World position of the placement anchor (main / desktop layout). */
   position: { x: number; y: number }
-  /** Uniform scale applied to the skeleton. */
+  /**
+   * Portrait layout world anchor for **root** instances only (when absent, portrait inherits main).
+   * Nested (pinned) objects omit this field.
+   */
+  layoutPt?: { position: { x: number; y: number } }
+  /** Landscape layout world anchor for root instances (optional; inherits main when absent). */
+  layoutLs?: { position: { x: number; y: number } }
+  /** Tablet layout world anchor for root instances (optional; inherits main when absent). */
+  layoutTb?: { position: { x: number; y: number } }
+  /** Portrait-only uniform display scale for root instances (optional; inherits `scale`). */
+  layoutPtScale?: number
+  /** Landscape-only uniform display scale for root instances (optional; inherits `scale`). */
+  layoutLsScale?: number
+  /** Tablet-only uniform display scale for root instances (optional; inherits `scale`). */
+  layoutTbScale?: number
+  /** Uniform scale applied to the skeleton (Main / canonical). */
   scale: number
   /** Whether the layer is visible on the canvas. */
   layerVisible: boolean
@@ -75,6 +90,11 @@ export type SpriteObject = {
 export type ProjectViewport = {
   backdropMode: string
   safeFramePreset: string
+  /**
+   * Which layout target drives layout-variant placeholder bones (`_ls`, `_pt`, etc.).
+   * Absent in older saves — treat as `main`.
+   */
+  placeholderLayoutTarget?: string
 }
 
 /** Root structure of project.json inside the .mancala ZIP. */

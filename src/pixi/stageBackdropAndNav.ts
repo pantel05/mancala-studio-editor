@@ -34,6 +34,8 @@ export function attachStageNavigation(
   opts: {
     getBackdropMode: () => StageBackdropMode
     onViewChange?: (scale: number) => void
+    /** Called when pan ends (middle-mouse or shift+backdrop) so hosts can persist zoom/pan. */
+    onPanEnd?: () => void
     /** Primary click on backdrop (not used for shift+drag pan). */
     onBackdropLeftPointerDown?: () => void
   },
@@ -92,6 +94,7 @@ export function attachStageNavigation(
     window.removeEventListener('pointermove', onPanWinMove)
     window.removeEventListener('pointerup', endPanWin)
     window.removeEventListener('pointercancel', endPanWin)
+    opts.onPanEnd?.()
   }
 
   const beginPan = (clientX: number, clientY: number) => {
