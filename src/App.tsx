@@ -2533,7 +2533,7 @@ function App() {
                   }
                   aria-label="Layouts: paired placeholder bone for nested symbols"
                 >
-                  <option value="main">Main (unsuffixed / desktop)</option>
+                  <option value="main">Main View</option>
                   <option value="pt">Portrait (pt / pr)</option>
                   <option value="ls">Landscape (ls)</option>
                   <option value="tb">Tablet (tb)</option>
