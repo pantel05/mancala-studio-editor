@@ -167,7 +167,10 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     const speed = spine.state.timeScale
     const playing = spine.autoUpdate
     const skin = spine.skeleton.skin?.name ?? null
-    const boneOffset = row.pinnedUnder ? { x: spine.position.x, y: spine.position.y } : null
+    const boneMain = row.pinnedUnder
+      ? (row.pinnedBoneOffsetMain ?? { x: spine.position.x, y: spine.position.y })
+      : null
+    const boneOffset = boneMain
 
     const mainWorld =
       !row.pinnedUnder && row.canonicalWorld
@@ -184,6 +187,15 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
       position: mainWorld,
       scale: mainScale,
       layerVisible: row.layerVisible,
+      ...(row.layoutPtLayerVisible !== undefined
+        ? { layoutPtLayerVisible: row.layoutPtLayerVisible }
+        : {}),
+      ...(row.layoutLsLayerVisible !== undefined
+        ? { layoutLsLayerVisible: row.layoutLsLayerVisible }
+        : {}),
+      ...(row.layoutTbLayerVisible !== undefined
+        ? { layoutTbLayerVisible: row.layoutTbLayerVisible }
+        : {}),
       locked: row.locked,
       animation,
       loop,
@@ -196,6 +208,15 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
         ? { hostId: row.pinnedUnder.hostRowId, boneName: row.pinnedUnder.boneName }
         : null,
       placeholderPolicyIgnored: row.placeholderPolicyIgnored,
+      ...(row.pinnedUnder && row.pinnedBoneLayoutPt
+        ? { boneLayoutPt: { x: row.pinnedBoneLayoutPt.x, y: row.pinnedBoneLayoutPt.y } }
+        : {}),
+      ...(row.pinnedUnder && row.pinnedBoneLayoutLs
+        ? { boneLayoutLs: { x: row.pinnedBoneLayoutLs.x, y: row.pinnedBoneLayoutLs.y } }
+        : {}),
+      ...(row.pinnedUnder && row.pinnedBoneLayoutTb
+        ? { boneLayoutTb: { x: row.pinnedBoneLayoutTb.x, y: row.pinnedBoneLayoutTb.y } }
+        : {}),
       ...(row.pinnedUnder || !row.layoutPt
         ? {}
         : { layoutPt: { position: { x: row.layoutPt.x, y: row.layoutPt.y } } }),
@@ -228,6 +249,15 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
       rotation: row.sprite.rotation,
       alpha: row.sprite.alpha,
       layerVisible: row.layerVisible,
+      ...(row.layoutPtLayerVisible !== undefined
+        ? { layoutPtLayerVisible: row.layoutPtLayerVisible }
+        : {}),
+      ...(row.layoutLsLayerVisible !== undefined
+        ? { layoutLsLayerVisible: row.layoutLsLayerVisible }
+        : {}),
+      ...(row.layoutTbLayerVisible !== undefined
+        ? { layoutTbLayerVisible: row.layoutTbLayerVisible }
+        : {}),
       locked: row.locked,
     }
     if (row.nineSlice) {

@@ -47,8 +47,14 @@ export type SpineControlRow = {
   spine: Spine
   /** When true, canvas drag is disabled for this instance. */
   locked: boolean
-  /** When false, the skeleton is hidden on the preview stage. */
+  /** When false, the skeleton is hidden on non-main layouts unless a per-layout override says otherwise. Main always shows all objects. */
   layerVisible: boolean
+  /** Optional visibility override for Portrait (PT); when absent, inherits {@link layerVisible}. */
+  layoutPtLayerVisible?: boolean
+  /** Optional visibility override for Landscape (LS). */
+  layoutLsLayerVisible?: boolean
+  /** Optional visibility override for Tablet (TB). */
+  layoutTbLayerVisible?: boolean
   /**
    * Invalid vs Common placeholders list — rig stays on canvas frozen (no playback / drag)
    * until names match or the list is updated.
@@ -71,6 +77,16 @@ export type SpineControlRow = {
   placeholderBindings: Record<string, string>
   /** When this instance is parented under another skeleton’s placeholder bone. */
   pinnedUnder: null | { hostRowId: string; boneName: string }
+  /**
+   * Pinned only: bone-local offset for **Main** (matches project `boneOffset`). Other layouts may override below.
+   */
+  pinnedBoneOffsetMain?: { x: number; y: number }
+  /** Pinned only: portrait bone offset; when absent, inherits {@link pinnedBoneOffsetMain}. */
+  pinnedBoneLayoutPt?: { x: number; y: number }
+  /** Pinned only: landscape bone offset override. */
+  pinnedBoneLayoutLs?: { x: number; y: number }
+  /** Pinned only: tablet bone offset override. */
+  pinnedBoneLayoutTb?: { x: number; y: number }
   /**
    * Root only: world placement for **Main** layout (canonical). Synced while editing Main;
    * used to restore the skeleton when leaving Portrait.
@@ -136,6 +152,11 @@ function useAxisScrub(
   sensitivity = 1,
   /** Snap / clamp scrub output (defaults to world half-pixel snapping). */
   snapAxis: (v: number) => number = snapWorldScalar,
+  /**
+   * Pixels of horizontal movement before scrub “arms” (avoids accidental drags on world axes).
+   * Use `0` for display scale and similar controls that should respond on the first pixel of motion.
+   */
+  activationThresholdPx = 3,
 ) {
   const scrubRef = useRef<{
     startX: number
@@ -180,7 +201,8 @@ function useAxisScrub(
       const s = scrubRef.current
       if (!s || e.pointerId !== s.pointerId) return
       const delta = (e.clientX - s.startX) * sensitivity
-      if (!s.active && Math.abs(delta) < 3) return
+      const rawPx = e.clientX - s.startX
+      if (!s.active && activationThresholdPx > 0 && Math.abs(rawPx) < activationThresholdPx) return
       if (!s.active) {
         s.active = true
         onEditBeginRef.current?.()
@@ -190,7 +212,7 @@ function useAxisScrub(
       }
       onChangeRef.current(snapAxisRef.current(s.startValue + delta), s.companion)
     },
-    [sensitivity],
+    [sensitivity, activationThresholdPx],
   )
 
   const endScrub = useCallback((committed: boolean) => {
@@ -332,6 +354,8 @@ export const SpineInstanceControls = forwardRef<
      * After a successful **root** world move (scrub / typed placement). Used to persist Main vs Portrait poses.
      */
     onAfterRootWorldPositionChange?: (rowId: string) => void
+    /** Persist bone-local offset into the row for the active layout tab (nested instances). */
+    onAfterPinnedBoneOffsetChange?: (rowId: string) => void
     /** Root only: uniform Pixi `spine.scale` for the active layout tab (Main vs pt / ls / tb). */
     onRootDisplayScaleChange?: (rowId: string, scale: number) => void
     /** User pressed Ignore on the frozen banner — unfreeze but keep error visible. */
@@ -355,6 +379,7 @@ export const SpineInstanceControls = forwardRef<
     onWorldPositionEditBegin,
     onWorldPositionEditEnd,
     onAfterRootWorldPositionChange,
+    onAfterPinnedBoneOffsetChange,
     onRootDisplayScaleChange,
     onIgnorePlaceholderPolicy,
     onAddToCommonAnimations,
@@ -881,6 +906,14 @@ export const SpineInstanceControls = forwardRef<
     [onWorldPositionEditEnd, onAfterRootWorldPositionChange, row.id, row.pinnedUnder],
   )
 
+  const onBoneOffsetScrubEditEnd = useCallback(
+    (committed: boolean) => {
+      onWorldPositionEditEnd?.(committed)
+      if (committed && row.pinnedUnder) onAfterPinnedBoneOffsetChange?.(row.id)
+    },
+    [onWorldPositionEditEnd, onAfterPinnedBoneOffsetChange, row.id, row.pinnedUnder],
+  )
+
   // ── Click-drag scrub for world position and bone offset axes ────────────────
   const worldXScrub = useAxisScrub(
     worldPosDisabled,
@@ -918,7 +951,7 @@ export const SpineInstanceControls = forwardRef<
       viewportStageRef?.current?.setSpineBoneLocalOffset(row.spine, newX, frozenY)
     },
     onWorldPositionEditBegin,
-    onWorldPositionEditEnd,
+    onBoneOffsetScrubEditEnd,
   )
 
   const boneYScrub = useAxisScrub(
@@ -931,7 +964,7 @@ export const SpineInstanceControls = forwardRef<
       viewportStageRef?.current?.setSpineBoneLocalOffset(row.spine, frozenX, newY)
     },
     onWorldPositionEditBegin,
-    onWorldPositionEditEnd,
+    onBoneOffsetScrubEditEnd,
   )
 
   const snapSpineDisplayScale = useCallback((v: number) => Math.max(0.01, Math.round(v * 1000) / 1000), [])
@@ -939,7 +972,7 @@ export const SpineInstanceControls = forwardRef<
   const scaleScrub = useAxisScrub(
     scaleInspectorDisabled,
     () => {
-      const v = row.spine.scale.x
+      const v = displayScaleForLayout
       return { value: v, companion: v }
     },
     (newVal, _companion) => {
@@ -952,6 +985,7 @@ export const SpineInstanceControls = forwardRef<
     undefined,
     0.1,
     snapSpineDisplayScale,
+    0,
   )
 
   const scaleInputRef = useRef<HTMLInputElement | null>(null)
@@ -1147,8 +1181,17 @@ export const SpineInstanceControls = forwardRef<
     onWorldPositionEditBegin?.()
     const ok = stage.setSpineBoneLocalOffset(row.spine, nx, ny)
     onWorldPositionEditEnd?.(ok)
+    if (ok && row.pinnedUnder) onAfterPinnedBoneOffsetChange?.(row.id)
     setBoneOffsetEdit(null)
-  }, [viewportStageRef, row.spine, onWorldPositionEditBegin, onWorldPositionEditEnd])
+  }, [
+    viewportStageRef,
+    row.spine,
+    row.pinnedUnder,
+    row.id,
+    onWorldPositionEditBegin,
+    onWorldPositionEditEnd,
+    onAfterPinnedBoneOffsetChange,
+  ])
 
   const onBoneOffsetKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {

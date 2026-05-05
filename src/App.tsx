@@ -55,9 +55,11 @@ import {
   snapshotsEqual,
   type SceneSnapshot,
 } from './scene/sceneSnapshot'
+import { effectiveLayerVisible } from './scene/layerVisibility'
 import { spineRowsAfterRemoval } from './scene/spineRowsAfterRemoval'
 import { ViewportMetricsOverlay } from './ViewportMetricsOverlay'
 import { applyPlaceholderBinding } from './spine/applyPlaceholderBindingState'
+import { effectivePinnedBoneOffset } from './spine/pinnedBoneLayout'
 import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
 
 const VIEWPORT_LAYOUT_WATERMARK: Record<PlaceholderLayoutKey, string> = {
@@ -415,44 +417,73 @@ function App() {
       if (layout === 'main') {
         setSpineRows((prev) =>
           prev.map((r) => {
-            if (r.pinnedUnder) return r
             const ap = after.positions[r.id]
             if (!ap) return r
             const bp = before.positions[r.id]
             if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            if (r.pinnedUnder) {
+              return { ...r, pinnedBoneOffsetMain: { x: ap.x, y: ap.y } }
+            }
             return { ...r, canonicalWorld: { x: ap.x, y: ap.y } }
           }),
         )
       } else if (layout === 'pt') {
         setSpineRows((prev) =>
           prev.map((r) => {
-            if (r.pinnedUnder) return r
             const ap = after.positions[r.id]
             if (!ap) return r
             const bp = before.positions[r.id]
             if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            if (r.pinnedUnder) {
+              const base = bp ?? ap
+              const main = r.pinnedBoneOffsetMain ?? { x: base.x, y: base.y }
+              const same = ap.x === main.x && ap.y === main.y
+              return {
+                ...r,
+                pinnedBoneOffsetMain: r.pinnedBoneOffsetMain ?? main,
+                pinnedBoneLayoutPt: same ? undefined : { x: ap.x, y: ap.y },
+              }
+            }
             return { ...r, layoutPt: { ...(r.layoutPt ?? {}), x: ap.x, y: ap.y } }
           }),
         )
       } else if (layout === 'ls') {
         setSpineRows((prev) =>
           prev.map((r) => {
-            if (r.pinnedUnder) return r
             const ap = after.positions[r.id]
             if (!ap) return r
             const bp = before.positions[r.id]
             if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            if (r.pinnedUnder) {
+              const base = bp ?? ap
+              const main = r.pinnedBoneOffsetMain ?? { x: base.x, y: base.y }
+              const same = ap.x === main.x && ap.y === main.y
+              return {
+                ...r,
+                pinnedBoneOffsetMain: r.pinnedBoneOffsetMain ?? main,
+                pinnedBoneLayoutLs: same ? undefined : { x: ap.x, y: ap.y },
+              }
+            }
             return { ...r, layoutLs: { ...(r.layoutLs ?? {}), x: ap.x, y: ap.y } }
           }),
         )
       } else if (layout === 'tb') {
         setSpineRows((prev) =>
           prev.map((r) => {
-            if (r.pinnedUnder) return r
             const ap = after.positions[r.id]
             if (!ap) return r
             const bp = before.positions[r.id]
             if (bp && bp.x === ap.x && bp.y === ap.y) return r
+            if (r.pinnedUnder) {
+              const base = bp ?? ap
+              const main = r.pinnedBoneOffsetMain ?? { x: base.x, y: base.y }
+              const same = ap.x === main.x && ap.y === main.y
+              return {
+                ...r,
+                pinnedBoneOffsetMain: r.pinnedBoneOffsetMain ?? main,
+                pinnedBoneLayoutTb: same ? undefined : { x: ap.x, y: ap.y },
+              }
+            }
             return { ...r, layoutTb: { ...(r.layoutTb ?? {}), x: ap.x, y: ap.y } }
           }),
         )
@@ -475,6 +506,37 @@ function App() {
         if (layout === 'pt') return { ...r, layoutPt: { ...(r.layoutPt ?? {}), x: pos.x, y: pos.y } }
         if (layout === 'ls') return { ...r, layoutLs: { ...(r.layoutLs ?? {}), x: pos.x, y: pos.y } }
         if (layout === 'tb') return { ...r, layoutTb: { ...(r.layoutTb ?? {}), x: pos.x, y: pos.y } }
+        return r
+      }),
+    )
+  }, [])
+
+  /** Persist nested bone-local offset for the active layout tab (inspector scrub / typed offset). */
+  const syncPinnedBoneOffsetStore = useCallback((rowId: string) => {
+    const row = spineRowsRef.current.find((r) => r.id === rowId)
+    const stage = stageRef.current
+    if (!row?.pinnedUnder || !stage) return
+    const pos = stage.getSpineBoneLocalOffset(row.spine)
+    if (!pos) return
+    const layout = placeholderLayoutTargetRef.current
+    setSpineRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId || !r.pinnedUnder) return r
+        if (layout === 'main') {
+          return { ...r, pinnedBoneOffsetMain: { x: pos.x, y: pos.y } }
+        }
+        const main = r.pinnedBoneOffsetMain
+        if (!main) return r
+        const sameAsMain = pos.x === main.x && pos.y === main.y
+        if (layout === 'pt') {
+          return { ...r, pinnedBoneLayoutPt: sameAsMain ? undefined : { x: pos.x, y: pos.y } }
+        }
+        if (layout === 'ls') {
+          return { ...r, pinnedBoneLayoutLs: sameAsMain ? undefined : { x: pos.x, y: pos.y } }
+        }
+        if (layout === 'tb') {
+          return { ...r, pinnedBoneLayoutTb: sameAsMain ? undefined : { x: pos.x, y: pos.y } }
+        }
         return r
       }),
     )
@@ -639,18 +701,18 @@ function App() {
 
   useEffect(() => {
     for (const row of spineRows) {
-      row.spine.visible = row.layerVisible
+      row.spine.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
       const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
       row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
     }
-  }, [spineRows])
+  }, [spineRows, placeholderLayoutTarget])
 
   useEffect(() => {
     for (const row of spriteRows) {
-      row.sprite.visible = row.layerVisible
+      row.sprite.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
       row.sprite.cursor = row.locked ? 'default' : 'grab'
     }
-  }, [spriteRows])
+  }, [spriteRows, placeholderLayoutTarget])
 
   const toggleRowLocked = useCallback(
     (id: string) => {
@@ -663,11 +725,49 @@ function App() {
 
   const toggleRowLayerVisible = useCallback(
     (id: string) => {
+      if (placeholderLayoutTarget === 'main') return
       pushUndoSnapshot()
-      setSpineRows((rows) => rows.map((r) => (r.id === id ? { ...r, layerVisible: !r.layerVisible } : r)))
-      setSpriteRows((rows) => rows.map((r) => (r.id === id ? { ...r, layerVisible: !r.layerVisible } : r)))
+      const L = placeholderLayoutTarget
+      setSpineRows((rows) =>
+        rows.map((r) => {
+          if (r.id !== id) return r
+          const eff = effectiveLayerVisible(r, L)
+          if (L === 'pt') {
+            if (eff) return { ...r, layoutPtLayerVisible: false }
+            return { ...r, layoutPtLayerVisible: r.layerVisible ? undefined : true }
+          }
+          if (L === 'ls') {
+            if (eff) return { ...r, layoutLsLayerVisible: false }
+            return { ...r, layoutLsLayerVisible: r.layerVisible ? undefined : true }
+          }
+          if (L === 'tb') {
+            if (eff) return { ...r, layoutTbLayerVisible: false }
+            return { ...r, layoutTbLayerVisible: r.layerVisible ? undefined : true }
+          }
+          return r
+        }),
+      )
+      setSpriteRows((rows) =>
+        rows.map((r) => {
+          if (r.id !== id) return r
+          const eff = effectiveLayerVisible(r, L)
+          if (L === 'pt') {
+            if (eff) return { ...r, layoutPtLayerVisible: false }
+            return { ...r, layoutPtLayerVisible: r.layerVisible ? undefined : true }
+          }
+          if (L === 'ls') {
+            if (eff) return { ...r, layoutLsLayerVisible: false }
+            return { ...r, layoutLsLayerVisible: r.layerVisible ? undefined : true }
+          }
+          if (L === 'tb') {
+            if (eff) return { ...r, layoutTbLayerVisible: false }
+            return { ...r, layoutTbLayerVisible: r.layerVisible ? undefined : true }
+          }
+          return r
+        }),
+      )
     },
-    [pushUndoSnapshot],
+    [placeholderLayoutTarget, pushUndoSnapshot],
   )
 
   const [selectedSpineId, setSelectedSpineId] = useState<string | null>(null)
@@ -785,8 +885,10 @@ function App() {
     if (order.length > 0) stageRef.current?.syncFullLayerOrder(order)
   }, [layerOrder, spineRows, spriteRows])
 
-  useEffect(() => {
-    stageRef.current?.reconcilePlaceholderAttachments(
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    stage.reconcilePlaceholderAttachments(
       spineRows.map((r) => ({
         id: r.id,
         spine: r.spine,
@@ -794,6 +896,44 @@ function App() {
       })),
       placeholderLayoutTarget,
     )
+    const mainInits: Array<{ id: string; x: number; y: number }> = []
+    for (const row of spineRows) {
+      if (!row.pinnedUnder) continue
+      if (
+        row.pinnedBoneOffsetMain == null &&
+        row.pinnedBoneLayoutPt == null &&
+        row.pinnedBoneLayoutLs == null &&
+        row.pinnedBoneLayoutTb == null
+      ) {
+        const pos = stage.getSpineBoneLocalOffset(row.spine)
+        if (pos) mainInits.push({ id: row.id, x: pos.x, y: pos.y })
+      }
+    }
+    const rowsForApply =
+      mainInits.length === 0
+        ? spineRows
+        : spineRows.map((row) => {
+            const it = mainInits.find((m) => m.id === row.id)
+            if (!it) return row
+            return { ...row, pinnedBoneOffsetMain: { x: it.x, y: it.y } }
+          })
+    for (const row of rowsForApply) {
+      if (!row.pinnedUnder) continue
+      const o = effectivePinnedBoneOffset(row, placeholderLayoutTarget)
+      stage.setSpineBoneLocalOffset(row.spine, o.x, o.y)
+    }
+    if (mainInits.length > 0) {
+      const snapshot = mainInits.slice()
+      queueMicrotask(() => {
+        setSpineRows((prev) =>
+          prev.map((row) => {
+            const it = snapshot.find((m) => m.id === row.id)
+            if (!it || row.pinnedBoneOffsetMain != null) return row
+            return { ...row, pinnedBoneOffsetMain: { x: it.x, y: it.y } }
+          }),
+        )
+      })
+    }
   }, [spineRows, placeholderLayoutTarget])
 
   const onPlaceholderBind = useCallback(
@@ -1660,15 +1800,14 @@ function App() {
       return
     }
     const { project, assetFiles } = result
+    const openLayoutTarget: PlaceholderLayoutKey = (() => {
+      const plt = project.viewport.placeholderLayoutTarget
+      return plt === 'main' || plt === 'pt' || plt === 'ls' || plt === 'tb' ? plt : 'main'
+    })()
 
     // Apply viewport settings
     setBackdropMode(project.viewport.backdropMode as Parameters<typeof setBackdropMode>[0])
-    {
-      const plt = project.viewport.placeholderLayoutTarget
-      setPlaceholderLayoutTarget(
-        plt === 'main' || plt === 'pt' || plt === 'ls' || plt === 'tb' ? plt : 'main',
-      )
-    }
+    setPlaceholderLayoutTarget(openLayoutTarget)
 
     // clearScene() resets projectFileHandleRef to null, so restore the handle afterwards
     clearScene()
@@ -1806,6 +1945,25 @@ function App() {
           layoutPtScale: saved.pinnedUnder ? undefined : saved.layoutPtScale,
           layoutLsScale: saved.pinnedUnder ? undefined : saved.layoutLsScale,
           layoutTbScale: saved.pinnedUnder ? undefined : saved.layoutTbScale,
+          pinnedBoneOffsetMain:
+            saved.pinnedUnder && saved.boneOffset
+              ? { x: saved.boneOffset.x, y: saved.boneOffset.y }
+              : undefined,
+          pinnedBoneLayoutPt:
+            saved.pinnedUnder && saved.boneLayoutPt
+              ? { x: saved.boneLayoutPt.x, y: saved.boneLayoutPt.y }
+              : undefined,
+          pinnedBoneLayoutLs:
+            saved.pinnedUnder && saved.boneLayoutLs
+              ? { x: saved.boneLayoutLs.x, y: saved.boneLayoutLs.y }
+              : undefined,
+          pinnedBoneLayoutTb:
+            saved.pinnedUnder && saved.boneLayoutTb
+              ? { x: saved.boneLayoutTb.x, y: saved.boneLayoutTb.y }
+              : undefined,
+          layoutPtLayerVisible: saved.layoutPtLayerVisible,
+          layoutLsLayerVisible: saved.layoutLsLayerVisible,
+          layoutTbLayerVisible: saved.layoutTbLayerVisible,
         }
       }),
     )
@@ -1824,7 +1982,13 @@ function App() {
         sprite.scale.set(saved.scaleX, saved.scaleY)
         sprite.rotation = saved.rotation
         sprite.alpha = saved.alpha
-        sprite.visible = saved.layerVisible
+        const visRow = {
+          layerVisible: saved.layerVisible,
+          layoutPtLayerVisible: saved.layoutPtLayerVisible,
+          layoutLsLayerVisible: saved.layoutLsLayerVisible,
+          layoutTbLayerVisible: saved.layoutTbLayerVisible,
+        }
+        sprite.visible = effectiveLayerVisible(visRow, openLayoutTarget)
 
         const insets = saved.nineSliceInsets ?? { left: 10, top: 10, right: 10, bottom: 10 }
         const row: SpriteRow = {
@@ -1836,6 +2000,9 @@ function App() {
           sprite,
           locked: saved.locked,
           layerVisible: saved.layerVisible,
+          layoutPtLayerVisible: saved.layoutPtLayerVisible,
+          layoutLsLayerVisible: saved.layoutLsLayerVisible,
+          layoutTbLayerVisible: saved.layoutTbLayerVisible,
           nineSlice: false,
           nineSliceInsets: insets,
         }
@@ -2187,8 +2354,9 @@ function App() {
                 <div className="editor-panel-title">Hierarchy</div>
                 <div className="editor-panel-content editor-panel-content--hierarchy">
                   <p className="editor-hierarchy-help">
-                    Top = drawn in front. Drag a row onto another to reorder. Dot = scene visibility; padlock = lock
-                    position; trash on the right removes from scene.
+                    Top = drawn in front. Drag a row onto another to reorder. Dot = visibility for the{' '}
+                    <strong>current layout tab</strong> (Main always shows every object); padlock = lock position;
+                    trash removes from scene.
                   </p>
                   <div className="editor-hierarchy-scroll">
                     <div className="editor-hierarchy" role="tree" aria-label="Objects in scene">
@@ -2198,6 +2366,8 @@ function App() {
                         const row = spineRow ?? spriteRow
                         if (!row) return null
                         const isSelected = id === selectedSpineId || id === selectedSpriteId
+                        const effLayerVis = effectiveLayerVisible(row, placeholderLayoutTarget)
+                        const visToggleDisabled = placeholderLayoutTarget === 'main'
                         return (
                           <div
                             key={id}
@@ -2212,12 +2382,28 @@ function App() {
                             <button
                               type="button"
                               className="editor-hierarchy-visibility"
-                              title={row.layerVisible ? 'Visible in scene (click to hide)' : 'Hidden in scene (click to show)'}
-                              aria-label={row.layerVisible ? 'Hide in preview scene' : 'Show in preview scene'}
-                              aria-pressed={row.layerVisible}
-                              onClick={(e) => { e.stopPropagation(); toggleRowLayerVisible(id) }}
+                              disabled={visToggleDisabled}
+                              title={
+                                visToggleDisabled
+                                  ? 'Main layout always shows all objects — switch to PT / LS / TB to hide per layout'
+                                  : effLayerVis
+                                    ? `Visible in ${placeholderLayoutTarget.toUpperCase()} preview (click to hide)`
+                                    : `Hidden in ${placeholderLayoutTarget.toUpperCase()} preview (click to show)`
+                              }
+                              aria-label={
+                                visToggleDisabled
+                                  ? 'Visibility is always on for Main layout'
+                                  : effLayerVis
+                                    ? 'Hide in preview for this layout'
+                                    : 'Show in preview for this layout'
+                              }
+                              aria-pressed={effLayerVis}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (!visToggleDisabled) toggleRowLayerVisible(id)
+                              }}
                             >
-                              <span className={`editor-hierarchy-dot${row.layerVisible ? ' is-on' : ''}`} aria-hidden />
+                              <span className={`editor-hierarchy-dot${effLayerVis ? ' is-on' : ''}`} aria-hidden />
                             </button>
                             <button
                               type="button"
@@ -2510,6 +2696,7 @@ function App() {
                       onWorldPositionEditBegin={onWorldPositionEditBegin}
                       onWorldPositionEditEnd={onWorldPositionEditEnd}
                       onAfterRootWorldPositionChange={syncRootSpineLayoutStore}
+                      onAfterPinnedBoneOffsetChange={syncPinnedBoneOffsetStore}
                       onRootDisplayScaleChange={onRootDisplayScaleChange}
                       onIgnorePlaceholderPolicy={() => ignoreSpinePlaceholderPolicy(row.id)}
                       onAddToCommonAnimations={addToCommonAnimationNames}

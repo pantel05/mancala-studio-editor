@@ -32,8 +32,14 @@ export type ProjectObject = {
   layoutTbScale?: number
   /** Uniform scale applied to the skeleton (Main / canonical). */
   scale: number
-  /** Whether the layer is visible on the canvas. */
+  /**
+   * Base visibility for non-main layouts (Main always shows all objects).
+   * Optional fields override per layout tab.
+   */
   layerVisible: boolean
+  layoutPtLayerVisible?: boolean
+  layoutLsLayerVisible?: boolean
+  layoutTbLayerVisible?: boolean
   /** Whether the layer is locked (no drag). */
   locked: boolean
   /** Active animation name, or null if none. */
@@ -53,6 +59,15 @@ export type ProjectObject = {
    * null when not pinned.
    */
   boneOffset: { x: number; y: number } | null
+  /**
+   * Pinned only: bone-local offset on Portrait when different from `boneOffset` (Main).
+   * Omit to inherit Main.
+   */
+  boneLayoutPt?: { x: number; y: number }
+  /** Pinned only: landscape bone offset override (optional). */
+  boneLayoutLs?: { x: number; y: number }
+  /** Pinned only: tablet bone offset override (optional). */
+  boneLayoutTb?: { x: number; y: number }
   /** When nested: the host object id and bone name. */
   pinnedUnder: { hostId: string; boneName: string } | null
   /** User pressed Ignore on the frozen placeholder banner. */
@@ -75,6 +90,9 @@ export type SpriteObject = {
   /** Alpha 0-1. */
   alpha: number
   layerVisible: boolean
+  layoutPtLayerVisible?: boolean
+  layoutLsLayerVisible?: boolean
+  layoutTbLayerVisible?: boolean
   locked: boolean
   /** Whether 9-slice scaling is active. Absent in older files = false. */
   nineSlice?: boolean

@@ -1,5 +1,6 @@
 import type { SpineControlRow } from '../SpineInstanceControls'
 import { snapWorldXY } from '../pixi/snapWorldPosition'
+import { effectivePinnedBoneOffset } from '../spine/pinnedBoneLayout'
 import type { PlaceholderLayoutKey } from '../spine/placeholderLayoutResolution'
 
 /** Uniform display scale (`spine.scale`) for a **root** row for the active layout tab. */
@@ -34,6 +35,15 @@ export type SceneSnapshot = {
   layoutPtScale?: Record<string, number | undefined>
   layoutLsScale?: Record<string, number | undefined>
   layoutTbScale?: Record<string, number | undefined>
+  /** Pinned rows: Main bone-local offset. */
+  pinnedBoneMain?: Record<string, { x: number; y: number }>
+  pinnedBonePt?: Record<string, { x: number; y: number } | undefined>
+  pinnedBoneLs?: Record<string, { x: number; y: number } | undefined>
+  pinnedBoneTb?: Record<string, { x: number; y: number } | undefined>
+  /** Per-layout visibility overrides (spine rows); key present means value replaces row field. */
+  layerVisPt?: Record<string, boolean | undefined>
+  layerVisLs?: Record<string, boolean | undefined>
+  layerVisTb?: Record<string, boolean | undefined>
 }
 
 export const SCENE_HISTORY_MAX = 50
@@ -57,6 +67,13 @@ export function captureSceneSnapshot(
   const layoutPtScale: Record<string, number | undefined> = {}
   const layoutLsScale: Record<string, number | undefined> = {}
   const layoutTbScale: Record<string, number | undefined> = {}
+  const pinnedBoneMain: Record<string, { x: number; y: number }> = {}
+  const pinnedBonePt: Record<string, { x: number; y: number } | undefined> = {}
+  const pinnedBoneLs: Record<string, { x: number; y: number } | undefined> = {}
+  const pinnedBoneTb: Record<string, { x: number; y: number } | undefined> = {}
+  const layerVisPt: Record<string, boolean | undefined> = {}
+  const layerVisLs: Record<string, boolean | undefined> = {}
+  const layerVisTb: Record<string, boolean | undefined> = {}
   for (const r of rows) {
     positions[r.id] = { x: r.spine.x, y: r.spine.y }
     meta[r.id] = {
@@ -80,6 +97,17 @@ export function captureSceneSnapshot(
       if (typeof r.layoutLsScale === 'number') layoutLsScale[r.id] = r.layoutLsScale
       if (typeof r.layoutTbScale === 'number') layoutTbScale[r.id] = r.layoutTbScale
     }
+    if (r.pinnedUnder) {
+      pinnedBoneMain[r.id] = {
+        ...(r.pinnedBoneOffsetMain ?? { x: r.spine.x, y: r.spine.y }),
+      }
+      if (r.pinnedBoneLayoutPt) pinnedBonePt[r.id] = { ...r.pinnedBoneLayoutPt }
+      if (r.pinnedBoneLayoutLs) pinnedBoneLs[r.id] = { ...r.pinnedBoneLayoutLs }
+      if (r.pinnedBoneLayoutTb) pinnedBoneTb[r.id] = { ...r.pinnedBoneLayoutTb }
+    }
+    if (r.layoutPtLayerVisible !== undefined) layerVisPt[r.id] = r.layoutPtLayerVisible
+    if (r.layoutLsLayerVisible !== undefined) layerVisLs[r.id] = r.layoutLsLayerVisible
+    if (r.layoutTbLayerVisible !== undefined) layerVisTb[r.id] = r.layoutTbLayerVisible
   }
   return {
     order,
@@ -93,6 +121,13 @@ export function captureSceneSnapshot(
     ...(Object.keys(layoutPtScale).length > 0 ? { layoutPtScale } : {}),
     ...(Object.keys(layoutLsScale).length > 0 ? { layoutLsScale } : {}),
     ...(Object.keys(layoutTbScale).length > 0 ? { layoutTbScale } : {}),
+    ...(Object.keys(pinnedBoneMain).length > 0 ? { pinnedBoneMain } : {}),
+    ...(Object.keys(pinnedBonePt).length > 0 ? { pinnedBonePt } : {}),
+    ...(Object.keys(pinnedBoneLs).length > 0 ? { pinnedBoneLs } : {}),
+    ...(Object.keys(pinnedBoneTb).length > 0 ? { pinnedBoneTb } : {}),
+    ...(Object.keys(layerVisPt).length > 0 ? { layerVisPt } : {}),
+    ...(Object.keys(layerVisLs).length > 0 ? { layerVisLs } : {}),
+    ...(Object.keys(layerVisTb).length > 0 ? { layerVisTb } : {}),
   }
 }
 
@@ -174,6 +209,46 @@ export function snapshotsEqual(a: SceneSnapshot, b: SceneSnapshot): boolean {
       if (!!la !== !!lb) return false
       if (la && lb && (la.x !== lb.x || la.y !== lb.y)) return false
     }
+
+    const aHasPinMain = !!(a.pinnedBoneMain && Object.prototype.hasOwnProperty.call(a.pinnedBoneMain, id))
+    const bHasPinMain = !!(b.pinnedBoneMain && Object.prototype.hasOwnProperty.call(b.pinnedBoneMain, id))
+    if (aHasPinMain !== bHasPinMain) return false
+    if (aHasPinMain) {
+      const pa = a.pinnedBoneMain![id]
+      const pb = b.pinnedBoneMain![id]
+      if (pa.x !== pb.x || pa.y !== pb.y) return false
+    }
+
+    const cmpPinOpt = (key: 'pinnedBonePt' | 'pinnedBoneLs' | 'pinnedBoneTb') => {
+      const aM = a[key]
+      const bM = b[key]
+      const aHas = !!(aM && Object.prototype.hasOwnProperty.call(aM, id))
+      const bHas = !!(bM && Object.prototype.hasOwnProperty.call(bM, id))
+      if (aHas !== bHas) return false
+      if (aHas) {
+        const la = aM![id]
+        const lb = bM![id]
+        if (!!la !== !!lb) return false
+        if (la && lb && (la.x !== lb.x || la.y !== lb.y)) return false
+      }
+      return true
+    }
+    if (!cmpPinOpt('pinnedBonePt')) return false
+    if (!cmpPinOpt('pinnedBoneLs')) return false
+    if (!cmpPinOpt('pinnedBoneTb')) return false
+
+    const cmpLayerVis = (key: 'layerVisPt' | 'layerVisLs' | 'layerVisTb') => {
+      const aM = a[key]
+      const bM = b[key]
+      const aHas = !!(aM && Object.prototype.hasOwnProperty.call(aM, id))
+      const bHas = !!(bM && Object.prototype.hasOwnProperty.call(bM, id))
+      if (aHas !== bHas) return false
+      if (aHas && aM![id] !== bM![id]) return false
+      return true
+    }
+    if (!cmpLayerVis('layerVisPt')) return false
+    if (!cmpLayerVis('layerVisLs')) return false
+    if (!cmpLayerVis('layerVisTb')) return false
   }
   return true
 }
@@ -191,9 +266,49 @@ export function applySceneSnapshot(
     if (!r) return rows
     const p = snap.positions[id]
     const m = snap.meta[id]
+    const hasPinnedMainSnap =
+      !!(snap.pinnedBoneMain && Object.prototype.hasOwnProperty.call(snap.pinnedBoneMain, id))
+    const pm = hasPinnedMainSnap ? snap.pinnedBoneMain![id] : undefined
+    const ptp = snap.pinnedBonePt?.[id]
+    const pinnedBoneLayoutPtNext =
+      snap.pinnedBonePt && Object.prototype.hasOwnProperty.call(snap.pinnedBonePt, id)
+        ? ptp
+        : r.pinnedBoneLayoutPt
+    const pls = snap.pinnedBoneLs?.[id]
+    const pinnedBoneLayoutLsNext =
+      snap.pinnedBoneLs && Object.prototype.hasOwnProperty.call(snap.pinnedBoneLs, id)
+        ? pls
+        : r.pinnedBoneLayoutLs
+    const ptb = snap.pinnedBoneTb?.[id]
+    const pinnedBoneLayoutTbNext =
+      snap.pinnedBoneTb && Object.prototype.hasOwnProperty.call(snap.pinnedBoneTb, id)
+        ? ptb
+        : r.pinnedBoneLayoutTb
+    const pinnedBoneOffsetMainNext = hasPinnedMainSnap && pm ? { ...pm } : r.pinnedBoneOffsetMain
+
+    const lvp = snap.layerVisPt?.[id]
+    const layoutPtLayerVisibleNext =
+      snap.layerVisPt && Object.prototype.hasOwnProperty.call(snap.layerVisPt, id)
+        ? lvp
+        : r.layoutPtLayerVisible
+    const lvl = snap.layerVisLs?.[id]
+    const layoutLsLayerVisibleNext =
+      snap.layerVisLs && Object.prototype.hasOwnProperty.call(snap.layerVisLs, id)
+        ? lvl
+        : r.layoutLsLayerVisible
+    const lvt = snap.layerVisTb?.[id]
+    const layoutTbLayerVisibleNext =
+      snap.layerVisTb && Object.prototype.hasOwnProperty.call(snap.layerVisTb, id)
+        ? lvt
+        : r.layoutTbLayerVisible
+
     if (p) {
       const s = snapWorldXY(p.x, p.y)
-      r.spine.position.set(s.x, s.y)
+      if (!r.pinnedUnder) {
+        r.spine.position.set(s.x, s.y)
+      } else if (!hasPinnedMainSnap) {
+        r.spine.position.set(s.x, s.y)
+      }
     }
     const cw = snap.canonicalWorld?.[id]
     const lp = snap.layoutPt?.[id]
@@ -245,6 +360,17 @@ export function applySceneSnapshot(
       layoutPtScale: layoutPtScaleNext,
       layoutLsScale: layoutLsScaleNext,
       layoutTbScale: layoutTbScaleNext,
+      pinnedBoneOffsetMain: pinnedBoneOffsetMainNext,
+      pinnedBoneLayoutPt: pinnedBoneLayoutPtNext,
+      pinnedBoneLayoutLs: pinnedBoneLayoutLsNext,
+      pinnedBoneLayoutTb: pinnedBoneLayoutTbNext,
+      layoutPtLayerVisible: layoutPtLayerVisibleNext,
+      layoutLsLayerVisible: layoutLsLayerVisibleNext,
+      layoutTbLayerVisible: layoutTbLayerVisibleNext,
+    }
+    if (merged.pinnedUnder && hasPinnedMainSnap) {
+      const o = effectivePinnedBoneOffset(merged, layoutTarget)
+      r.spine.position.set(o.x, o.y)
     }
     const sc = effectiveRootSpineScale(merged, layoutTarget)
     r.spine.scale.set(sc, sc)

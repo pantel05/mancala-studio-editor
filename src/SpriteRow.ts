@@ -25,8 +25,14 @@ export type SpriteRow = {
   sprite: Sprite | NineSliceSprite
   /** When true, canvas drag is disabled. */
   locked: boolean
-  /** When false, the sprite is hidden on the canvas. */
+  /**
+   * Base visibility for non-main layouts when no per-layout override is set.
+   * Main layout always shows every sprite.
+   */
   layerVisible: boolean
+  layoutPtLayerVisible?: boolean
+  layoutLsLayerVisible?: boolean
+  layoutTbLayerVisible?: boolean
   /** Whether 9-slice scaling is active for this sprite. */
   nineSlice: boolean
   /** Inset values used when nineSlice is true. */

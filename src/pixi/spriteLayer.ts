@@ -188,14 +188,11 @@ export function convertToNineSlice(
   // NineSliceSprite pivot at centre for consistent world-position behaviour
   nss.pivot.set(nss.width / 2, nss.height / 2)
 
-  const zIndex = old.parent ? Array.from(old.parent.children).indexOf(old) : -1
+  const preservedZ = old.zIndex
   destroyAnySprite(old)
 
-  if (zIndex >= 0 && zIndex < world.children.length) {
-    world.addChildAt(nss, zIndex)
-  } else {
-    world.addChild(nss)
-  }
+  nss.zIndex = preservedZ
+  world.addChild(nss)
 
   if (app && dragOpts) attachSpriteDrag(nss, app, world, dragOpts)
   row.sprite = nss
@@ -226,14 +223,11 @@ export function convertToSprite(
   // Restore scale so visual size matches the width/height of the nine-slice
   sprite.scale.set(1, 1)
 
-  const zIndex = old.parent ? Array.from(old.parent.children).indexOf(old) : -1
+  const preservedZ = old.zIndex
   destroyAnySprite(old)
 
-  if (zIndex >= 0 && zIndex < world.children.length) {
-    world.addChildAt(sprite, zIndex)
-  } else {
-    world.addChild(sprite)
-  }
+  sprite.zIndex = preservedZ
+  world.addChild(sprite)
 
   if (app && dragOpts) attachSpriteDrag(sprite, app, world, dragOpts)
   row.sprite = sprite

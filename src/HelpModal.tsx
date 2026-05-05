@@ -303,7 +303,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <thead><tr><th>Control</th><th>Action</th></tr></thead>
                   <tbody>
                     <tr><td>Click row</td><td>Select the object and open it in the Inspector</td></tr>
-                    <tr><td>Eye icon</td><td>Toggle layer visibility (hidden objects are not rendered)</td></tr>
+                    <tr><td>Green dot</td><td>Toggle visibility for the <strong>current layout tab</strong> (PT / LS / TB). Main always shows every object; hidden layers are not drawn in that layout.</td></tr>
                     <tr><td>Lock icon</td><td>Lock the object so it cannot be dragged on the canvas</td></tr>
                     <tr><td>▲ / ▼ arrows</td><td>Move the object up or down in the layer order</td></tr>
                     <tr><td>× button</td><td>Remove the object from the scene (asks for confirmation)</td></tr>

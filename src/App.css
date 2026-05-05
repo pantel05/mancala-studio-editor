@@ -626,6 +626,15 @@
   cursor: not-allowed;
 }
 
+.editor-hierarchy-visibility:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.editor-hierarchy-visibility:disabled:hover {
+  background: transparent;
+}
+
 /* After name row — extra gap so it’s not confused with the drag / select strip */
 .editor-hierarchy-remove {
   margin-left: 6px;
@@ -2695,4 +2704,14 @@
 .sprite-nineslice-inset-input:focus {
   outline: none;
   border-color: var(--border-focus);
+}
+
+.sprite-nineslice-inset-readout {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  font-size: 11px;
+  text-align: right;
+  min-height: 22px;
+  box-sizing: border-box;
 }

@@ -37,6 +37,8 @@ function useAxisScrub(
   onEditEnd: ((committed: boolean) => void) | undefined,
   sensitivity = 1,
   snapStep = 0.5,
+  /** Use `0` so scale (and similar) reacts on the first pixel of drag; default keeps a small dead zone for position. */
+  activationThresholdPx = 3,
 ) {
   const scrubRef = useRef<{
     startX: number
@@ -78,7 +80,7 @@ function useAxisScrub(
       const s = scrubRef.current
       if (!s || e.pointerId !== s.pointerId) return
       const rawDelta = e.clientX - s.startX
-      if (!s.active && Math.abs(rawDelta) < 3) return
+      if (!s.active && activationThresholdPx > 0 && Math.abs(rawDelta) < activationThresholdPx) return
       if (!s.active) {
         s.active = true
         onEditBeginRef.current?.()
@@ -88,7 +90,7 @@ function useAxisScrub(
       }
       onChangeRef.current(snapTo(s.startValue + rawDelta * sensitivity, snapStep), s.companion)
     },
-    [sensitivity],
+    [sensitivity, activationThresholdPx],
   )
 
   const endScrub = useCallback((committed: boolean) => {
@@ -351,8 +353,8 @@ export function SpriteInstanceControls({
   const scaleXScrub = useAxisScrub(
     disabled,
     () => {
-      const sx = row.sprite.scale.x
-      const sy = row.sprite.scale.y
+      const sx = scaleX
+      const sy = scaleY
       scaleLinkedRatioRef.current = sx !== 0 ? sy / sx : 1
       return { value: sx, companion: sy }
     },
@@ -367,13 +369,14 @@ export function SpriteInstanceControls({
     undefined,
     0.01,
     0.1,
+    0,
   )
 
   const scaleYScrub = useAxisScrub(
     disabled,
     () => {
-      const sx = row.sprite.scale.x
-      const sy = row.sprite.scale.y
+      const sx = scaleX
+      const sy = scaleY
       scaleLinkedRatioRef.current = sy !== 0 ? sx / sy : 1
       return { value: sy, companion: sx }
     },
@@ -388,6 +391,7 @@ export function SpriteInstanceControls({
     undefined,
     0.01,
     0.1,
+    0,
   )
 
   const rotScrub = useAxisScrub(
@@ -418,6 +422,7 @@ export function SpriteInstanceControls({
     undefined,
     1,
     1,
+    0,
   )
 
   const sliceHeightScrub = useAxisScrub(
@@ -439,7 +444,84 @@ export function SpriteInstanceControls({
     undefined,
     1,
     1,
+    0,
   )
+
+  const insetsRef = useRef(insets)
+  insetsRef.current = insets
+  const insetUiDisabled = disabled || !nineSliceEnabled
+
+  const insetLeftScrub = useAxisScrub(
+    insetUiDisabled,
+    () => ({ value: insets.left, companion: 0 }),
+    (newVal) => {
+      const tw = Math.max(1, row.sprite.texture?.width ?? 1024)
+      const v = Math.max(0, Math.min(Math.round(newVal), tw - 1))
+      onEditBegin?.()
+      applyInsets({ ...insetsRef.current, left: v })
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+    0,
+  )
+  const insetTopScrub = useAxisScrub(
+    insetUiDisabled,
+    () => ({ value: insets.top, companion: 0 }),
+    (newVal) => {
+      const th = Math.max(1, row.sprite.texture?.height ?? 1024)
+      const v = Math.max(0, Math.min(Math.round(newVal), th - 1))
+      onEditBegin?.()
+      applyInsets({ ...insetsRef.current, top: v })
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+    0,
+  )
+  const insetRightScrub = useAxisScrub(
+    insetUiDisabled,
+    () => ({ value: insets.right, companion: 0 }),
+    (newVal) => {
+      const tw = Math.max(1, row.sprite.texture?.width ?? 1024)
+      const v = Math.max(0, Math.min(Math.round(newVal), tw - 1))
+      onEditBegin?.()
+      applyInsets({ ...insetsRef.current, right: v })
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+    0,
+  )
+  const insetBottomScrub = useAxisScrub(
+    insetUiDisabled,
+    () => ({ value: insets.bottom, companion: 0 }),
+    (newVal) => {
+      const th = Math.max(1, row.sprite.texture?.height ?? 1024)
+      const v = Math.max(0, Math.min(Math.round(newVal), th - 1))
+      onEditBegin?.()
+      applyInsets({ ...insetsRef.current, bottom: v })
+      onEditEnd?.(true)
+    },
+    undefined,
+    undefined,
+    1,
+    1,
+    0,
+  )
+
+  const insetScrubBySide = {
+    left: insetLeftScrub,
+    top: insetTopScrub,
+    right: insetRightScrub,
+    bottom: insetBottomScrub,
+  } as const
 
   // ── Position double-click edit ─────────────────────────────────────────────
   const beginEditPosAxis = useCallback(
@@ -487,8 +569,20 @@ export function SpriteInstanceControls({
   const [rotEdit, setRotEdit] = useState<string | null>(null)
   const [sliceWEdit, setSliceWEdit] = useState<string | null>(null)
   const [sliceHEdit, setSliceHEdit] = useState<string | null>(null)
+  const [insetEdit, setInsetEdit] = useState<null | { side: keyof NineSliceInsets; draft: string }>(null)
 
-  useEffect(() => { setScaleXEdit(null); setScaleYEdit(null); setRotEdit(null); setSliceWEdit(null); setSliceHEdit(null) }, [row.id])
+  useEffect(() => {
+    if (!nineSliceEnabled) setInsetEdit(null)
+  }, [nineSliceEnabled])
+
+  useEffect(() => {
+    setScaleXEdit(null)
+    setScaleYEdit(null)
+    setRotEdit(null)
+    setSliceWEdit(null)
+    setSliceHEdit(null)
+    setInsetEdit(null)
+  }, [row.id])
 
   const scaleXInputRef = useRef<HTMLInputElement | null>(null)
   const scaleYInputRef = useRef<HTMLInputElement | null>(null)
@@ -500,12 +594,20 @@ export function SpriteInstanceControls({
   const skipRotBlur = useRef(false)
   const skipSliceWBlur = useRef(false)
   const skipSliceHBlur = useRef(false)
+  const insetInputRef = useRef<HTMLInputElement | null>(null)
+  const skipInsetBlur = useRef(false)
 
   useLayoutEffect(() => { if (scaleXEdit !== null) { scaleXInputRef.current?.focus(); scaleXInputRef.current?.select() } }, [scaleXEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (scaleYEdit !== null) { scaleYInputRef.current?.focus(); scaleYInputRef.current?.select() } }, [scaleYEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (rotEdit !== null) { rotInputRef.current?.focus(); rotInputRef.current?.select() } }, [rotEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (sliceWEdit !== null) { sliceWInputRef.current?.focus(); sliceWInputRef.current?.select() } }, [sliceWEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => { if (sliceHEdit !== null) { sliceHInputRef.current?.focus(); sliceHInputRef.current?.select() } }, [sliceHEdit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (insetEdit !== null) {
+      insetInputRef.current?.focus()
+      insetInputRef.current?.select()
+    }
+  }, [insetEdit?.side]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commitScaleX = useCallback(() => {
     if (scaleXEdit === null) return
@@ -565,6 +667,47 @@ export function SpriteInstanceControls({
     }
     setSliceHEdit(null)
   }, [sliceHEdit, sizeLinked, sliceWidth, sliceHeight, onEditBegin, onEditEnd])
+
+  const commitInsetEdit = useCallback(() => {
+    const cur = insetEdit
+    if (!cur) return
+    const v0 = parseCoord(cur.draft)
+    if (v0 === null) {
+      setInsetEdit(null)
+      return
+    }
+    const tw = Math.max(1, row.sprite.texture?.width ?? 1024)
+    const th = Math.max(1, row.sprite.texture?.height ?? 1024)
+    const cap = cur.side === 'left' || cur.side === 'right' ? tw - 1 : th - 1
+    const v = Math.max(0, Math.min(Math.round(v0), cap))
+    onEditBegin?.()
+    applyInsets({ ...insets, [cur.side]: v })
+    onEditEnd?.(true)
+    setInsetEdit(null)
+  }, [insetEdit, row.sprite, insets, applyInsets, onEditBegin, onEditEnd])
+
+  const onInsetKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        skipInsetBlur.current = true
+        commitInsetEdit()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        skipInsetBlur.current = true
+        setInsetEdit(null)
+      }
+    },
+    [commitInsetEdit],
+  )
+
+  const onInsetBlur = useCallback(() => {
+    if (skipInsetBlur.current) {
+      skipInsetBlur.current = false
+      return
+    }
+    commitInsetEdit()
+  }, [commitInsetEdit])
 
   const onPanelPointerDownCapture = useCallback(
     (e: { button: number; target: EventTarget | null }) => {
@@ -898,28 +1041,47 @@ export function SpriteInstanceControls({
             <span>9-slice</span>
           </label>
           {nineSliceEnabled && (
-            <div className="sprite-nineslice-insets" title="Corner insets in source texture pixels">
-              {(['left', 'top', 'right', 'bottom'] as const).map((side) => (
-                <label key={side} className="sprite-nineslice-inset-field">
-                  <span className="sprite-nineslice-inset-label">{side[0].toUpperCase()}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    disabled={disabled}
-                    className="sprite-nineslice-inset-input"
-                    value={insets[side]}
-                    onChange={(e) => {
-                      const v = Math.max(0, Math.round(Number(e.target.value)))
-                      if (!Number.isFinite(v)) return
-                      onEditBegin?.()
-                      const newInsets = { ...insets, [side]: v }
-                      applyInsets(newInsets)
-                      onEditEnd?.(true)
-                    }}
-                  />
-                </label>
-              ))}
+            <div className="sprite-nineslice-insets" title="Corner insets (texture px). Drag readout or double-click to type.">
+              {(['left', 'top', 'right', 'bottom'] as const).map((side) => {
+                const scrub = insetScrubBySide[side]
+                return (
+                  <label key={side} className="sprite-nineslice-inset-field">
+                    <span className="sprite-nineslice-inset-label">{side[0].toUpperCase()}</span>
+                    {insetEdit?.side === side ? (
+                      <input
+                        ref={insetInputRef}
+                        type="text"
+                        inputMode="numeric"
+                        disabled={disabled}
+                        className="sprite-nineslice-inset-input"
+                        value={insetEdit.draft}
+                        onChange={(e) =>
+                          setInsetEdit((prev) =>
+                            prev && prev.side === side ? { ...prev, draft: e.target.value } : prev,
+                          )
+                        }
+                        onBlur={onInsetBlur}
+                        onKeyDown={onInsetKeyDown}
+                        aria-label={`9-slice inset ${side}`}
+                      />
+                    ) : (
+                      <span
+                        role="button"
+                        tabIndex={disabled ? -1 : 0}
+                        className="spine-world-position-readout sprite-nineslice-inset-readout"
+                        onDoubleClick={() => !disabled && setInsetEdit({ side, draft: String(insets[side]) })}
+                        onPointerDown={scrub.handlePointerDown}
+                        onPointerMove={scrub.handlePointerMove}
+                        onPointerUp={scrub.handlePointerUp}
+                        onPointerCancel={scrub.handlePointerCancel}
+                        title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
+                      >
+                        {insets[side]}
+                      </span>
+                    )}
+                  </label>
+                )
+              })}
             </div>
           )}
         </div>

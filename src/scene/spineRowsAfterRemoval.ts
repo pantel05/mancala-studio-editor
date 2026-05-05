@@ -1,4 +1,5 @@
 import type { SpineControlRow } from '../SpineInstanceControls'
+import { clearPinnedBoneOffsetFields } from '../spine/applyPlaceholderBindingState'
 
 /** Drops the row and clears any placeholder / nesting references to it. */
 export function spineRowsAfterRemoval(rows: SpineControlRow[], removeId: string): SpineControlRow[] {
@@ -10,6 +11,7 @@ export function spineRowsAfterRemoval(rows: SpineControlRow[], removeId: string)
     }
     let pinnedUnder = r.pinnedUnder
     if (pinnedUnder?.hostRowId === removeId) pinnedUnder = null
-    return { ...r, placeholderBindings, pinnedUnder }
+    const base = { ...r, placeholderBindings, pinnedUnder }
+    return pinnedUnder == null && r.pinnedUnder != null ? clearPinnedBoneOffsetFields(base) : base
   })
 }

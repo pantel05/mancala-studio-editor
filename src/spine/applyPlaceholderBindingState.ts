@@ -1,5 +1,16 @@
 import { placeholderBonesShareLayoutGroup } from './placeholderLayoutResolution'
 
+/** Strip per-layout bone offsets when a row is no longer nested. */
+export function clearPinnedBoneOffsetFields<T extends Record<string, unknown>>(r: T): T {
+  return {
+    ...r,
+    pinnedBoneOffsetMain: undefined,
+    pinnedBoneLayoutPt: undefined,
+    pinnedBoneLayoutLs: undefined,
+    pinnedBoneLayoutTb: undefined,
+  } as T
+}
+
 export type PlaceholderBindingAwareRow = {
   id: string
   placeholderBindings: Record<string, string>
@@ -40,7 +51,7 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
   if (childRowId && prevChildId && prevChildId !== childRowId) {
     const stillOnHost = otherHostBindingsForChild(host.placeholderBindings, boneName, prevChildId)
     if (stillOnHost.length === 0) {
-      rows = rows.map((r) => (r.id === prevChildId ? { ...r, pinnedUnder: null } : r))
+      rows = rows.map((r) => (r.id === prevChildId ? clearPinnedBoneOffsetFields({ ...r, pinnedUnder: null }) : r))
     }
   }
 
@@ -55,7 +66,9 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
           delete nb[oldBone]
           return { ...r, placeholderBindings: nb }
         })
-        rows = rows.map((r) => (r.id === childRowId ? { ...r, pinnedUnder: null } : r))
+        rows = rows.map((r) =>
+          r.id === childRowId ? clearPinnedBoneOffsetFields({ ...r, pinnedUnder: null }) : r,
+        )
       } else if (child.pinnedUnder.boneName !== boneName) {
         const oldBone = child.pinnedUnder.boneName
         if (!placeholderBonesShareLayoutGroup(oldBone, boneName)) {
@@ -85,7 +98,7 @@ export function applyPlaceholderBinding<T extends PlaceholderBindingAwareRow>(
       .map(([b]) => b)
     rows = rows.map((r) => {
       if (r.id !== prevChildId) return r
-      if (remaining.length === 0) return { ...r, pinnedUnder: null }
+      if (remaining.length === 0) return clearPinnedBoneOffsetFields({ ...r, pinnedUnder: null })
       if (r.pinnedUnder?.hostRowId === hostRowId) {
         return { ...r, pinnedUnder: { hostRowId, boneName: [...remaining].sort()[0]! } }
       }
