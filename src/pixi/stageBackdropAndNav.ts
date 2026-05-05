@@ -30,7 +30,8 @@ function wheelZoomFactor(dyPixels: number): number {
   return Math.min(Math.max(raw, 0.75), 1.35)
 }
 
-const MIN_WORLD_SCALE = 0.2
+/** Minimum canvas zoom (wheel / pan view); 0.01 = 1% in the zoom badge. */
+const MIN_WORLD_SCALE = 0.01
 const MAX_WORLD_SCALE = 4
 
 export function paintBackdrop(
