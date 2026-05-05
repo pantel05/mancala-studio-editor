@@ -2,6 +2,37 @@ import { Application, Container, FederatedPointerEvent, Graphics, Point } from '
 
 export type StageBackdropMode = 'dark' | 'checker'
 
+/** CSS px per line for `WheelEvent.deltaMode === DOM_DELTA_LINE` (browser convention). */
+const WHEEL_LINE_HEIGHT_PX = 16
+
+/**
+ * Wheel `deltaY` in pixels so zoom feels consistent across macOS trackpads, Windows mouse
+ * wheels (often line- or large pixel steps), and `DOM_DELTA_PAGE`.
+ */
+function wheelDeltaYPixels(e: WheelEvent, pageHeightPx: number): number {
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return e.deltaY * WHEEL_LINE_HEIGHT_PX
+  }
+  if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return e.deltaY * pageHeightPx
+  }
+  return e.deltaY
+}
+
+/**
+ * Scale multiplier from wheel delta: proportional to scroll distance (smooth on trackpads,
+ * avoids huge jumps when Windows sends one large notch or several line steps).
+ * ~8% change per ~100px of normalized delta.
+ */
+function wheelZoomFactor(dyPixels: number): number {
+  const k = Math.log(1.08) / 100
+  const raw = Math.exp(-dyPixels * k)
+  return Math.min(Math.max(raw, 0.75), 1.35)
+}
+
+const MIN_WORLD_SCALE = 0.2
+const MAX_WORLD_SCALE = 4
+
 export function paintBackdrop(
   g: Graphics,
   w: number,
@@ -56,8 +87,12 @@ export function attachStageNavigation(
     if (!host.contains(e.target as Node)) return
     e.preventDefault()
     const old = world.scale.x
-    const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08
-    const ns = Math.min(4, Math.max(0.2, old * factor))
+    const pageH = host.clientHeight || app.screen.height
+    const dyPixels = wheelDeltaYPixels(e, pageH)
+    if (!Number.isFinite(dyPixels) || dyPixels === 0) return
+
+    const factor = wheelZoomFactor(dyPixels)
+    const ns = Math.min(MAX_WORLD_SCALE, Math.max(MIN_WORLD_SCALE, old * factor))
     const p = new Point()
     app.renderer.events.mapPositionToPoint(p, e.clientX, e.clientY)
     const og = new Point()

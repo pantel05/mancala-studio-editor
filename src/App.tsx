@@ -77,6 +77,7 @@ const INSPECTOR_LAYOUT_BADGE: Record<PlaceholderLayoutKey, string> = {
 }
 import { filesByLowerName, findAtlasFileForStemTag } from './spine/findAtlasForStem'
 import { loadSpineFromFileGroup } from './spine/loadSpineFromFileGroup'
+import { EDITOR_VERSION } from './editorVersion'
 import './App.css'
 
 type LoadOutcome = {
@@ -2143,7 +2144,10 @@ function App() {
         tabIndex={-1}
       />
 
-      <header className="editor-titlebar" aria-label="MANCALA GAMING STUDIO EDITOR">
+      <header
+        className="editor-titlebar"
+        aria-label={`MANCALA GAMING STUDIO EDITOR, version ${EDITOR_VERSION}`}
+      >
         <div className="editor-titlebar-left">
           <img
             className="editor-app-logo"
@@ -2341,7 +2345,10 @@ function App() {
           )}
         </div>
         <div className="editor-titlebar-hints">
-          <h1 className="editor-app-name editor-app-name--titlebar-end">MANCALA GAMING STUDIO EDITOR</h1>
+          <h1 className="editor-app-name editor-app-name--titlebar-end">
+            MANCALA GAMING STUDIO EDITOR{' '}
+            <span className="editor-app-name-version">(ver. {EDITOR_VERSION})</span>
+          </h1>
         </div>
       </header>
 
