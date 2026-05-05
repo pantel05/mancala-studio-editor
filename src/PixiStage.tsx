@@ -21,11 +21,12 @@ import {
 } from './pixi/spriteLayer'
 import type { NineSliceInsets, SpriteRow } from './SpriteRow'
 import { NineSliceGuide } from './pixi/nineSliceGuide'
-import { attachSpineToHostPlaceholder } from './pixi/placeholderAttachment'
+import { attachSpineStackToHostPlaceholder } from './pixi/placeholderAttachment'
 import {
   pickPlaceholderBoneForLayout,
   type PlaceholderLayoutKey,
 } from './spine/placeholderLayoutResolution'
+import { normalizePlaceholderBindings } from './spine/placeholderBindingsMap'
 import {
   attachStageNavigation,
   paintBackdrop,
@@ -37,7 +38,7 @@ import {
 } from './pixi/safeFrameOverlay'
 import { snapWorldXY } from './pixi/snapWorldPosition'
 import { applySpineOriginAtRootBone } from './pixi/spineBoundingOrigin'
-import { paintWorldGrid, spineAnchorsInWorldSpace } from './pixi/worldGrid'
+import { paintWorldGridGeometry, paintWorldGridSpineAnchors } from './pixi/worldGrid'
 import {
   atlasTagForStemAndFile,
   atlasTagsForStem,
@@ -91,7 +92,7 @@ export type LoadedSpineInstance = {
 export type PlaceholderReconcileRow = {
   id: string
   spine: Spine
-  placeholderBindings: Record<string, string>
+  placeholderBindings: Record<string, string | string[]>
 }
 
 export type PixiStageProps = {
@@ -246,8 +247,31 @@ function bringOverlayToFront(world: Container, overlay: Graphics) {
 const OVERLAY_Z = 10_000
 /** World-space safe / layout frame draws above scene content so guides stay readable. */
 const SAFE_FRAME_WORLD_Z = 600_000
+const WORLD_GRID_LINES_Z = -500_000
+const WORLD_GRID_ANCHORS_Z = -499_999
+
+/** Caps HiDPI renderer resolution to reduce GPU memory and fill cost in heavy scenes. */
+const EDITOR_MAX_DEVICE_RESOLUTION = 1.35
 
 type StageScreenDim = { w: number; h: number }
+
+/** True if any skeleton in the world tree is driving runtime animation this frame. */
+function anySpineAutoUpdating(root: Container): boolean {
+  const stack: Container[] = [root]
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    for (let i = 0; i < node.children.length; i++) {
+      const c = node.children[i]
+      if (c instanceof Spine) {
+        if (c.autoUpdate) return true
+        stack.push(c)
+      } else if (c instanceof Container) {
+        stack.push(c)
+      }
+    }
+  }
+  return false
+}
 
 /** Logical view size: prefer Pixi `screen`, fall back to host layout when still 0×0. */
 function readStageViewSize(application: Application, host: HTMLElement): StageScreenDim | null {
@@ -384,7 +408,30 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   const worldRef = useRef<Container | null>(null)
   const centerShellRef = useRef<Container | null>(null)
   const backdropRef = useRef<Graphics | null>(null)
-  const worldGridRef = useRef<Graphics | null>(null)
+  const worldGridLinesRef = useRef<Graphics | null>(null)
+  const worldGridAnchorsRef = useRef<Graphics | null>(null)
+  /** When pan/zoom/view size/layout/grid toggle change, redraw static grid + layout overlay. */
+  const stageGeomSigRef = useRef<{
+    ok: boolean
+    wx: number
+    wy: number
+    sx: number
+    sy: number
+    gw: number
+    gh: number
+    gridOn: boolean
+    layout: PlaceholderLayoutKey
+  }>({
+    ok: false,
+    wx: 0,
+    wy: 0,
+    sx: 1,
+    sy: 1,
+    gw: 0,
+    gh: 0,
+    gridOn: true,
+    layout: 'main',
+  })
   const overlayRef = useRef<Graphics | null>(null)
   const safeFrameRef = useRef<Graphics | null>(null)
   const disposeNavRef = useRef<(() => void) | null>(null)
@@ -544,6 +591,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     let cancelled = false
     let disposeStageResize: (() => void) | null = null
     let hostResizeObserver: ResizeObserver | null = null
+    let disposeVisibilityListener: (() => void) | null = null
 
     const boot = async () => {
       const application = new Application()
@@ -552,7 +600,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         backgroundColor: 0x1a1d26,
         antialias: true,
         autoDensity: true,
-        resolution: Math.min(window.devicePixelRatio ?? 1, 2),
+        resolution: Math.min(window.devicePixelRatio ?? 1, EDITOR_MAX_DEVICE_RESOLUTION),
         preference: 'webgl',
       })
 
@@ -578,9 +626,13 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       overlay.eventMode = 'none'
       overlay.zIndex = OVERLAY_Z
 
-      const worldGrid = new Graphics()
-      worldGrid.eventMode = 'none'
-      worldGrid.zIndex = -500_000
+      const worldGridLines = new Graphics()
+      worldGridLines.eventMode = 'none'
+      worldGridLines.zIndex = WORLD_GRID_LINES_Z
+
+      const worldGridAnchors = new Graphics()
+      worldGridAnchors.eventMode = 'none'
+      worldGridAnchors.zIndex = WORLD_GRID_ANCHORS_Z
 
       const safeFrameG = new Graphics()
       safeFrameG.eventMode = 'none'
@@ -589,7 +641,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       worldRef.current = world
       centerShellRef.current = centerShell
       backdropRef.current = backdrop
-      worldGridRef.current = worldGrid
+      worldGridLinesRef.current = worldGridLines
+      worldGridAnchorsRef.current = worldGridAnchors
       overlayRef.current = overlay
       safeFrameRef.current = safeFrameG
 
@@ -599,7 +652,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
       centerShell.addChild(world)
 
-      world.addChild(worldGrid)
+      world.addChild(worldGridLines)
+      world.addChild(worldGridAnchors)
       world.addChild(overlay)
       world.addChild(safeFrameG)
 
@@ -666,39 +720,89 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         rendererUnknown.runners.postrender.add(meter.hook)
       }
 
+      const onVisibilityChange = () => {
+        if (cancelled) return
+        if (document.visibilityState === 'hidden') application.ticker.stop()
+        else application.ticker.start()
+      }
+      document.addEventListener('visibilitychange', onVisibilityChange)
+      disposeVisibilityListener = () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
+
+      let anchorThrottlePhase = 0
       application.ticker.add(() => {
-        const sf = safeFrameRef.current
         const wld = worldRef.current
-        if (sf && wld) {
-          const vw = application.screen.width
-          const vh = application.screen.height
-          const layout = viewportLayoutTargetRef.current
-          const pair =
-            layout === 'main' ? null : computeWorldLayoutAuthoringPair(layout, 5)
-          if (pair) paintWorldReferenceFrameOverlay(sf, wld, vw, vh, pair)
-          else sf.clear()
-        }
-
-        const o = overlayRef.current
-        if (o) o.clear()
-
-        const wg = worldGridRef.current
         const appLive = appRef.current
         const hostLive = hostRef.current
-        if (wg && wld && appLive && hostLive) {
-          const spines: Spine[] = []
-          for (const c of wld.children) {
-            if (c instanceof Spine) spines.push(c)
+        if (!wld || !appLive || !hostLive) return
+
+        const vs = readStageViewSize(appLive, hostLive)
+        const gw = vs?.w ?? appLive.screen.width
+        const gh = vs?.h ?? appLive.screen.height
+        const wx = wld.x
+        const wy = wld.y
+        const sx = wld.scale.x
+        const sy = wld.scale.y
+        const layout = viewportLayoutTargetRef.current
+        const gridOn = showWorldGridRef.current
+
+        const sig = stageGeomSigRef.current
+        const geomDirty =
+          !sig.ok ||
+          sig.wx !== wx ||
+          sig.wy !== wy ||
+          sig.sx !== sx ||
+          sig.sy !== sy ||
+          sig.gw !== gw ||
+          sig.gh !== gh ||
+          sig.gridOn !== gridOn ||
+          sig.layout !== layout
+
+        if (geomDirty) {
+          sig.ok = true
+          sig.wx = wx
+          sig.wy = wy
+          sig.sx = sx
+          sig.sy = sy
+          sig.gw = gw
+          sig.gh = gh
+          sig.gridOn = gridOn
+          sig.layout = layout
+        }
+
+        const sf = safeFrameRef.current
+        if (sf && wld) {
+          const pair =
+            layout === 'main' ? null : computeWorldLayoutAuthoringPair(layout, 5)
+          if (pair) {
+            if (geomDirty) paintWorldReferenceFrameOverlay(sf, wld, gw, gh, pair)
+          } else if (geomDirty) {
+            sf.clear()
           }
-          const vs = readStageViewSize(appLive, hostLive)
-          const gw = vs?.w ?? appLive.screen.width
-          const gh = vs?.h ?? appLive.screen.height
-          paintWorldGrid(wg, wld, gw, gh, {
-            enabled: showWorldGridRef.current,
-            spineAnchors: showWorldGridRef.current
-              ? spineAnchorsInWorldSpace(wld, spines)
-              : [],
-          })
+        }
+
+        const wgLines = worldGridLinesRef.current
+        const wgAnchors = worldGridAnchorsRef.current
+        if (wgLines && wgAnchors) {
+          if (geomDirty) {
+            paintWorldGridGeometry(wgLines, wld, gw, gh, { enabled: gridOn })
+          }
+          if (gridOn) {
+            const spines: Spine[] = []
+            for (const c of wld.children) {
+              if (c instanceof Spine) spines.push(c)
+            }
+            const liveAnim = anySpineAutoUpdating(wld)
+            anchorThrottlePhase = (anchorThrottlePhase + 1) & 1
+            const paintAnchors =
+              geomDirty || liveAnim || anchorThrottlePhase === 0
+            if (paintAnchors) {
+              paintWorldGridSpineAnchors(wgAnchors, wld, spines)
+            }
+          } else {
+            wgAnchors.clear()
+          }
         }
       })
 
@@ -710,6 +814,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
     return () => {
       cancelled = true
+      disposeVisibilityListener?.()
+      disposeVisibilityListener = null
       setPixiWorldReady(false)
       hostResizeObserver?.disconnect()
       hostResizeObserver = null
@@ -736,7 +842,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       worldRef.current = null
       centerShellRef.current = null
       backdropRef.current = null
-      worldGridRef.current = null
+      worldGridLinesRef.current = null
+      worldGridAnchorsRef.current = null
       overlayRef.current = null
       safeFrameRef.current = null
       if (app) {
@@ -836,13 +943,34 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       placeholderDetachRef.current.clear()
       const byId = new Map(rows.map((r) => [r.id, r.spine]))
       for (const row of rows) {
+        const bindMap = normalizePlaceholderBindings(row.placeholderBindings)
         const childToBones = new Map<string, string[]>()
-        for (const [bone, childId] of Object.entries(row.placeholderBindings)) {
-          if (!childId) continue
-          if (!childToBones.has(childId)) childToBones.set(childId, [])
-          childToBones.get(childId)!.push(bone)
+        for (const [boneKey, childIds] of Object.entries(bindMap)) {
+          for (const childId of childIds) {
+            if (!childToBones.has(childId)) childToBones.set(childId, [])
+            childToBones.get(childId)!.push(boneKey)
+          }
         }
+
+        const assigned = new Set<string>()
+
+        // Several symbols on the same placeholder bone → one slot stack (addSlotObject replaces if we attach twice).
+        for (const [boneKey, childIds] of Object.entries(bindMap)) {
+          const unique = [...new Set(childIds)]
+          if (unique.length < 2) continue
+          const spines = unique.map((id) => byId.get(id)).filter((s): s is Spine => Boolean(s))
+          if (spines.length < 2) continue
+          const resolvedBone =
+            pickPlaceholderBoneForLayout([boneKey], layoutTarget) ?? boneKey
+          if (!row.spine.skeleton.findBone(resolvedBone)) continue
+          const { detach } = attachSpineStackToHostPlaceholder(row.spine, resolvedBone, spines, world)
+          placeholderDetachRef.current.set(`${row.id}::bone::${boneKey}`, detach)
+          for (const id of unique) assigned.add(id)
+        }
+
+        // One symbol per bone key, or layout-variant keys (same child, multiple bone names) → one attach each.
         for (const [childId, bones] of childToBones) {
+          if (assigned.has(childId)) continue
           const existing = bones.filter((b) => !!row.spine.skeleton.findBone(b))
           const bone =
             pickPlaceholderBoneForLayout(existing.length > 0 ? existing : bones, layoutTarget) ??
@@ -850,8 +978,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           if (!bone) continue
           const child = byId.get(childId)
           if (!child) continue
-          const { detach } = attachSpineToHostPlaceholder(row.spine, bone, child, world)
-          placeholderDetachRef.current.set(`${row.id}::${childId}`, detach)
+          const { detach } = attachSpineStackToHostPlaceholder(row.spine, bone, [child], world)
+          placeholderDetachRef.current.set(`${row.id}::child::${childId}`, detach)
         }
       }
     },

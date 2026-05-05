@@ -6,22 +6,23 @@ export type PlaceholderAttachResult = {
 }
 
 /**
- * Parents `child` under `host` so it follows the given bone (slot attachment when a matching slot exists).
- * The child is wrapped in a {@link Container} so slot objects or manual bone matrices apply cleanly.
+ * Parents multiple `children` under `host` at one bone using a **single** slot object (or one ticker
+ * root). Spine only keeps one object per `addSlotObject` slot; extra symbols must be inner wrappers
+ * under that root so they do not replace each other.
  */
-export function attachSpineToHostPlaceholder(
+export function attachSpineStackToHostPlaceholder(
   host: Spine,
   boneName: string,
-  child: Spine,
+  children: Spine[],
   world: Container,
 ): PlaceholderAttachResult {
   const bone = host.skeleton.findBone(boneName)
   if (!bone) {
-    if (child.parent && child.parent !== world) child.removeFromParent()
-    if (!child.parent) world.addChild(child)
-    return {
-      detach: () => {},
+    for (const child of children) {
+      if (child.parent && child.parent !== world) child.removeFromParent()
+      if (!child.parent) world.addChild(child)
     }
+    return { detach: () => {} }
   }
 
   const slotName = (() => {
@@ -33,31 +34,32 @@ export function attachSpineToHostPlaceholder(
     return null
   })()
 
-  // Detach child from any previous parent (the parent may be a destroyed wrapper after a swap).
-  if (child.parent) {
-    try { child.removeFromParent() } catch { /* parent may already be destroyed */ }
-  }
-  // Do NOT reset child.position here — the bone-local offset set by the user (via drag or
-  // inspector scrub) must survive atlas-tag swaps and re-reconciliations.
+  const stackRoot = new Container()
 
-  const wrapper = new Container()
-  wrapper.addChild(child)
+  for (const child of children) {
+    if (child.parent) {
+      try { child.removeFromParent() } catch { /* parent may already be destroyed */ }
+    }
+    const wrapper = new Container()
+    wrapper.addChild(child)
+    stackRoot.addChild(wrapper)
+  }
 
   let tickerUpdate: (() => void) | null = null
 
   if (slotName && host.skeleton.data.findSlot(slotName)) {
-    host.addSlotObject(slotName, wrapper)
+    host.addSlotObject(slotName, stackRoot)
   } else {
-    host.addChild(wrapper)
+    host.addChild(stackRoot)
     const update = () => {
-      const matrix = wrapper.localTransform
+      const matrix = stackRoot.localTransform
       matrix.a = bone.a
       matrix.b = bone.c
       matrix.c = -bone.b
       matrix.d = -bone.d
       matrix.tx = bone.worldX
       matrix.ty = bone.worldY
-      wrapper.setFromMatrix(matrix)
+      stackRoot.setFromMatrix(matrix)
     }
     tickerUpdate = update
     host.ticker.add(update)
@@ -65,31 +67,44 @@ export function attachSpineToHostPlaceholder(
   }
 
   const detach = () => {
-    // host or wrapper may be destroyed if the host spine was swapped with children:false.
     if (tickerUpdate) {
       try { host.ticker.remove(tickerUpdate) } catch { /* host destroyed */ }
     }
-    try { host.removeSlotObject(wrapper) } catch { /* not a slot object or host destroyed */ }
+    try { host.removeSlotObject(stackRoot) } catch { /* not a slot object or host destroyed */ }
     try {
-      if (wrapper.parent) wrapper.removeFromParent()
-    } catch { /* wrapper parent may be destroyed */ }
+      if (stackRoot.parent) stackRoot.removeFromParent()
+    } catch { /* stackRoot parent may be destroyed */ }
 
-    if (!wrapper.destroyed) {
-      // The wrapper may contain a *different* spine than the originally-captured `child`
-      // when swapSpineInstance replaced the child in-place during an atlas-tag swap.
-      // Move every living child of the wrapper to world so the next reconcile can re-attach it.
-      for (const wrapChild of [...wrapper.children]) {
-        try { world.addChild(wrapChild) } catch { /* addChild re-parents automatically */ }
+    if (!stackRoot.destroyed) {
+      for (const inner of [...stackRoot.children]) {
+        for (const wrapChild of [...inner.children]) {
+          try { world.addChild(wrapChild) } catch { /* addChild re-parents */ }
+        }
+        try { inner.destroy({ children: false }) } catch {}
       }
-      try { wrapper.destroy({ children: false }) } catch {}
+      try { stackRoot.destroy({ children: false }) } catch {}
     } else {
-      // Wrapper was cascade-destroyed (shouldn't happen with children:false, but guard anyway).
-      if (!child.destroyed) {
-        try { child.removeFromParent() } catch {}
-        world.addChild(child)
+      for (const child of children) {
+        if (!child.destroyed) {
+          try { child.removeFromParent() } catch {}
+          try { world.addChild(child) } catch {}
+        }
       }
     }
   }
 
   return { detach }
+}
+
+/**
+ * Parents `child` under `host` so it follows the given bone (slot attachment when a matching slot exists).
+ * Prefer {@link attachSpineStackToHostPlaceholder} when several symbols share one placeholder bone.
+ */
+export function attachSpineToHostPlaceholder(
+  host: Spine,
+  boneName: string,
+  child: Spine,
+  world: Container,
+): PlaceholderAttachResult {
+  return attachSpineStackToHostPlaceholder(host, boneName, [child], world)
 }

@@ -938,8 +938,13 @@ function App() {
   }, [spineRows, placeholderLayoutTarget])
 
   const onPlaceholderBind = useCallback(
-    (hostRowId: string, boneName: string, childRowId: string | null) => {
-      setSpineRows((prev) => applyPlaceholderBinding(prev, hostRowId, boneName, childRowId))
+    (
+      hostRowId: string,
+      boneName: string,
+      childRowId: string | null,
+      op: 'replace' | 'add' | 'remove' = 'replace',
+    ) => {
+      setSpineRows((prev) => applyPlaceholderBinding(prev, hostRowId, boneName, childRowId, op))
     },
     [],
   )
@@ -1503,7 +1508,7 @@ function App() {
           /** Carry the row's existing ignored flag so a texture-only swap doesn't un-ignore it. */
           placeholderPolicyIgnored: boolean
           /** Carry existing bindings — a texture swap doesn't change skeleton structure. */
-          placeholderBindings: Record<string, string>
+          placeholderBindings: Record<string, string | string[]>
           placeholders: ReturnType<typeof resolveInspectorPlaceholders>
           phIssues: ValidationIssue[]
           animIssues: ValidationIssue[]

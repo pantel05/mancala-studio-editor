@@ -1753,6 +1753,47 @@
   gap: 3px;
 }
 
+.spine-placeholder-bind--add {
+  margin-top: 4px;
+}
+
+.spine-placeholder-attached-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spine-placeholder-attached-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.spine-placeholder-attached-name {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spine-placeholder-remove-btn {
+  flex-shrink: 0;
+}
+
+.spine-placeholder-clear-bone-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 10px;
+}
+
 .spine-slots-block {
   width: 100%;
   flex-basis: 100%;

@@ -122,7 +122,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <strong>Adjust</strong> the animation, skin, scale, loop, and speed for Spine objects; or scale, rotation, and opacity for sprites — all in the <em>Inspector</em> panel.
                   </li>
                   <li>
-                    <strong>Attach</strong> child skeletons to named placeholder bones of a parent skeleton for hierarchical scenes.
+                    <strong>Attach</strong> one or more child skeletons to each named placeholder bone of a parent for hierarchical scenes.
                   </li>
                   <li>
                     <strong>Validate</strong> the scene — the Validation panel shows naming policy errors and animation warnings.
@@ -136,7 +136,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Interface areas</h3>
                 <table className="help-table">
                   <tbody>
-                    <tr><td><strong>Title bar</strong></td><td>Project menu, Settings menu, Help button, Undo/Redo, atlas resolution toggle, scene controls.</td></tr>
+                    <tr><td><strong>Title bar</strong></td><td>Project menu, Settings menu, Help button, Undo/Redo, atlas resolution toggle, app version next to the name, and backdrop mode. The <strong>Game view</strong> toolbar (above the canvas) has layout presets, optional <strong>Metrics</strong> overlay, zoom percentage, and reset view.</td></tr>
                     <tr><td><strong>Hierarchy panel</strong> (left)</td><td>Lists all scene objects with colour-coded type badges (<span className="help-badge-inline help-badge-inline--spine">SKL</span> Spine, <span className="help-badge-inline help-badge-inline--sprite">IMG</span> Image); controls visibility, lock, and layer order.</td></tr>
                     <tr><td><strong>Canvas</strong> (centre)</td><td>The live PixiJS renderer — drag objects, zoom, pan, view the world grid.</td></tr>
                     <tr><td><strong>Inspector panel</strong> (right)</td><td>Per-object settings: position, animation/skin/scale for Spine; position/scale/rotation/opacity for sprites.</td></tr>
@@ -251,12 +251,13 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <li>Shows the object's current X / Y position in world pixels (1 decimal place, snapped to 0.5 px).</li>
                   <li><strong>Double-click</strong> a value to type an exact coordinate and press <kbd>Enter</kbd> to apply.</li>
                   <li><strong>Click &amp; drag left/right</strong> on a value label to scrub it continuously.</li>
+                  <li>Live values and scrubbing apply to the <strong>object currently selected in the Hierarchy</strong> (the row open in the Inspector).</li>
                 </ul>
 
                 <h3 className="help-section-title">Bone Offset</h3>
                 <ul className="help-list">
                   <li>Only visible when the object is attached to a placeholder bone of a parent skeleton.</li>
-                  <li>Lets you nudge the child independently inside the placeholder without moving the parent.</li>
+                  <li>Each nested symbol has its own Bone Offset — nudge that child inside the bone without moving the parent or other symbols on the same bone.</li>
                   <li>Same double-click and drag-to-scrub interactions as World Position.</li>
                 </ul>
 
@@ -286,8 +287,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
 
                 <h3 className="help-section-title">Placeholders section</h3>
                 <p className="help-p">
-                  Lists all placeholder bones in the skeleton. Attach a child skeleton to a placeholder by selecting
-                  it from the dropdown next to the bone name.
+                  Lists every placeholder bone on the parent skeleton. For each bone you can attach <strong>one or more</strong> other
+                  skeletons (symbols): use <strong>Add symbol</strong> and pick a skeleton from the dropdown. Attached symbols appear in a list with <strong>Remove</strong> per entry, and <strong>Clear all on this bone</strong> removes every symbol from that bone at once.
+                  Select a nested symbol in the Hierarchy to adjust its animation, skin, and <strong>Bone Offset</strong> independently.
                 </p>
               </>
             )}
@@ -356,13 +358,13 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   making it follow that bone's position and rotation in real time.
                 </p>
 
-                <h3 className="help-section-title">Attaching a child skeleton</h3>
+                <h3 className="help-section-title">Attaching child skeletons (symbols)</h3>
                 <ol className="help-ol">
                   <li>Select the <strong>parent</strong> skeleton in the Hierarchy.</li>
-                  <li>In the Inspector, scroll to the <strong>Placeholders</strong> section.</li>
-                  <li>Find the placeholder bone you want and use its dropdown to select which loaded skeleton to attach.</li>
-                  <li>The child skeleton immediately snaps to the bone's world position.</li>
-                  <li>Use <strong>Bone Offset</strong> (also in the Inspector) to fine-tune the child's position relative to the bone.</li>
+                  <li>In the Inspector, open the <strong>Placeholders</strong> section.</li>
+                  <li>For a placeholder bone, use <strong>Add symbol</strong> and choose a skeleton from the dropdown. Repeat to stack multiple symbols on the same bone; each is drawn in its own Spine slot so they do not replace one another.</li>
+                  <li>Each child snaps to the bone's world position. Select the child row in the Hierarchy and use <strong>Bone Offset</strong> to fine-tune that symbol only.</li>
+                  <li>Use <strong>Remove</strong> next to a symbol or <strong>Clear all on this bone</strong> to detach.</li>
                 </ol>
 
                 <h3 className="help-section-title">Common placeholder names</h3>
@@ -411,7 +413,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Canvas navigation</h3>
                 <table className="help-table">
                   <tbody>
-                    <tr><td><strong>Scroll wheel</strong></td><td>Zoom in / out centred on the cursor</td></tr>
+                    <tr><td><strong>Scroll wheel</strong></td><td>Zoom in / out centred on the cursor (about <strong>1%</strong> to <strong>400%</strong> of world scale; the toolbar shows the current zoom)</td></tr>
                     <tr><td><strong>Middle mouse drag</strong></td><td>Pan the canvas</td></tr>
                     <tr><td><strong>Shift + drag</strong> (on backdrop)</td><td>Pan the canvas</td></tr>
                     <tr><td><strong>Reset view button</strong></td><td>Return to default zoom and position</td></tr>
@@ -434,8 +436,12 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
 
                 <h3 className="help-section-title">Backdrop mode</h3>
                 <p className="help-p">
-                  Switch between <strong>Dark</strong>, <strong>Light</strong>, and <strong>Transparent</strong> backdrop modes
-                  using the backdrop button in the title bar. Useful for checking how characters look on different backgrounds.
+                  Use the backdrop dropdown in the title bar to choose <strong>Solid</strong> (dark fill) or <strong>Checker</strong> (neutral transparency grid). Useful for judging edges and semi-transparent attachments.
+                </p>
+
+                <h3 className="help-section-title">Metrics overlay</h3>
+                <p className="help-p">
+                  Enable <strong>Metrics</strong> in the Game view toolbar to show a live panel with FPS, frame time, draw calls (when available), renderer info, canvas size, Spine instance counts, aggregate bone/slot/skin/animation counts, optional JavaScript heap usage, and a short summary for the currently selected skeleton.
                 </p>
 
                 <h3 className="help-section-title">Layouts (device frames)</h3>
@@ -463,7 +469,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <li>World position, scale X/Y, rotation, and opacity for each sprite</li>
                   <li>Selected animation, skin, loop, and speed for each Spine object</li>
                   <li>Layer order (combined for both Spine and sprite objects), visibility, and lock state</li>
-                  <li>Placeholder bindings (which child is attached to which bone)</li>
+                  <li>Placeholder bindings (which child skeletons are attached to which bones — one ID or a list of IDs per bone when multiple symbols share a placeholder)</li>
                   <li>Ignored placeholder policy flags</li>
                   <li>Backdrop mode and active layout target (Main / Portrait / Landscape / Tablet)</li>
                 </ul>

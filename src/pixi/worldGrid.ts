@@ -64,17 +64,34 @@ export function visibleWorldBounds(
   }
 }
 
+/** Skeleton instance origin in world space (works when Spine is nested under placeholders). */
+export function spineAnchorsInWorldSpace(world: Container, spines: Spine[]): { x: number; y: number }[] {
+  const global = new Point()
+  const local = new Point()
+  const out: { x: number; y: number }[] = []
+  for (const spine of spines) {
+    if (spine.destroyed) continue   // skip spines mid-swap / partially destroyed
+    try {
+      spine.getGlobalPosition(global)
+      world.toLocal(global, undefined, local)
+      out.push({ x: local.x, y: local.y })
+    } catch {
+      // transform not ready yet (e.g. just added to scene, first tick not run)
+    }
+  }
+  return out
+}
+
 /**
- * World-space grid and axes through (0,0): +X right, +Y down (Pixi / Spine runtime).
- * With the stage camera default, world (0,0) is drawn at the viewport center (see `PixiStage`).
- * Drawn under Spine instances; transforms with pan/zoom.
+ * Grid lines, axes, and world origin only — **cheap to skip** when the camera has not moved.
+ * Pair with {@link paintWorldGridSpineAnchors} on a separate `Graphics` for animated roots.
  */
-export function paintWorldGrid(
+export function paintWorldGridGeometry(
   g: Graphics,
   world: Container,
   screenW: number,
   screenH: number,
-  opts: WorldGridPaintOpts,
+  opts: { enabled: boolean },
 ): void {
   g.clear()
   if (!opts.enabled || screenW <= 0 || screenH <= 0) return
@@ -107,9 +124,16 @@ export function paintWorldGrid(
 
   const originR = Math.max(2.5 / sx, 1.5)
   g.circle(0, 0, originR).fill(originFill)
+}
 
+/** Spine root markers in world space — redraw when skeletons move (e.g. animation). */
+export function paintWorldGridSpineAnchors(g: Graphics, world: Container, spines: Spine[]): void {
+  g.clear()
+  if (spines.length === 0) return
+  const sx = Math.max(Math.abs(world.scale.x), 1e-6)
   const arm = Math.max(12 / sx, 5)
-  for (const p of opts.spineAnchors) {
+  const anchors = spineAnchorsInWorldSpace(world, spines)
+  for (const p of anchors) {
     g.moveTo(p.x - arm, p.y).lineTo(p.x + arm, p.y).stroke(spineAnchorStroke)
     g.moveTo(p.x, p.y - arm).lineTo(p.x, p.y + arm).stroke(spineAnchorStroke)
     const r = Math.max(3 / sx, 2)
@@ -117,20 +141,24 @@ export function paintWorldGrid(
   }
 }
 
-/** Skeleton instance origin in world space (works when Spine is nested under placeholders). */
-export function spineAnchorsInWorldSpace(world: Container, spines: Spine[]): { x: number; y: number }[] {
-  const global = new Point()
-  const local = new Point()
-  const out: { x: number; y: number }[] = []
-  for (const spine of spines) {
-    if (spine.destroyed) continue   // skip spines mid-swap / partially destroyed
-    try {
-      spine.getGlobalPosition(global)
-      world.toLocal(global, undefined, local)
-      out.push({ x: local.x, y: local.y })
-    } catch {
-      // transform not ready yet (e.g. just added to scene, first tick not run)
-    }
+/**
+ * One-shot full grid + anchors (same `Graphics`). Prefer the split painters on hot paths.
+ */
+export function paintWorldGrid(
+  g: Graphics,
+  world: Container,
+  screenW: number,
+  screenH: number,
+  opts: WorldGridPaintOpts,
+): void {
+  paintWorldGridGeometry(g, world, screenW, screenH, { enabled: opts.enabled })
+  if (!opts.enabled || screenW <= 0 || screenH <= 0) return
+  const sx = Math.max(Math.abs(world.scale.x), 1e-6)
+  const arm = Math.max(12 / sx, 5)
+  for (const p of opts.spineAnchors) {
+    g.moveTo(p.x - arm, p.y).lineTo(p.x + arm, p.y).stroke(spineAnchorStroke)
+    g.moveTo(p.x, p.y - arm).lineTo(p.x, p.y + arm).stroke(spineAnchorStroke)
+    const r = Math.max(3 / sx, 2)
+    g.circle(p.x, p.y, r).stroke(spineAnchorStroke)
   }
-  return out
 }

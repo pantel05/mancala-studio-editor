@@ -201,11 +201,17 @@ export function applyProjectStateToRows(
 export function resolveProjectBindings(
   savedObj: ProjectObject,
   projectIdToRowId: Map<string, string>,
-): Record<string, string> {
-  const resolved: Record<string, string> = {}
-  for (const [boneName, savedTargetId] of Object.entries(savedObj.placeholderBindings)) {
-    const liveId = projectIdToRowId.get(savedTargetId)
-    if (liveId) resolved[boneName] = liveId
+): Record<string, string | string[]> {
+  const resolved: Record<string, string | string[]> = {}
+  for (const [boneName, val] of Object.entries(savedObj.placeholderBindings)) {
+    const ids = Array.isArray(val) ? val : [val]
+    const live: string[] = []
+    for (const sid of ids) {
+      const liveId = projectIdToRowId.get(sid)
+      if (liveId) live.push(liveId)
+    }
+    if (live.length === 1) resolved[boneName] = live[0]!
+    else if (live.length > 1) resolved[boneName] = live
   }
   return resolved
 }

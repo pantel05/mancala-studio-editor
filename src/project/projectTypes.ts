@@ -52,8 +52,11 @@ export type ProjectObject = {
   playing: boolean
   /** Active skin name. */
   skin: string | null
-  /** Placeholder binding map: boneName → target object id (within this project). */
-  placeholderBindings: Record<string, string>
+  /**
+   * Placeholder binding map: boneName → one or more target object ids (within this project).
+   * A single string is supported for older files.
+   */
+  placeholderBindings: Record<string, string | string[]>
   /**
    * Bone-local offset when this object is nested under a placeholder.
    * null when not pinned.

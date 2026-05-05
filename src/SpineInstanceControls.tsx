@@ -15,6 +15,7 @@ import type { Spine } from '@esotericsoftware/spine-pixi-v8'
 import type { PixiStageHandle } from './PixiStage'
 import { pickIdleAnimationName } from './spine/pickIdleAnimation'
 import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
+import { normalizePlaceholderBindings } from './spine/placeholderBindingsMap'
 import type { SkeletonPlaceholderInfo } from './spine/scanSkeletonPlaceholders'
 import { snapWorldScalar } from './pixi/snapWorldPosition'
 
@@ -22,7 +23,7 @@ function isCanvasDragPickTargetIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
   return Boolean(
     target.closest(
-      'button, input, select, textarea, option, .spine-field, .spine-toolbar, details, .spine-draw-order, .spine-placeholders-block, .spine-placeholder-bind, .spine-placeholder-row, .spine-world-position-readout, .spine-scale-readout',
+      'button, input, select, textarea, option, .spine-field, .spine-toolbar, details, .spine-draw-order, .spine-placeholders-block, .spine-placeholder-bind, .spine-placeholder-row, .spine-placeholder-attached-list, .spine-world-position-readout, .spine-scale-readout',
     ),
   )
 }
@@ -73,8 +74,8 @@ export type SpineControlRow = {
   activeAtlasTag?: string
   /** Bones detected as placeholders (see `placeholderConvention.ts`). */
   placeholders: SkeletonPlaceholderInfo[]
-  /** Maps placeholder bone name → attached skeleton row id (symbol). */
-  placeholderBindings: Record<string, string>
+  /** Maps placeholder bone name → attached symbol row id(s). */
+  placeholderBindings: Record<string, string | string[]>
   /** When this instance is parented under another skeleton’s placeholder bone. */
   pinnedUnder: null | { hostRowId: string; boneName: string }
   /**
@@ -341,7 +342,12 @@ export const SpineInstanceControls = forwardRef<
     /** Other loaded rows (for attaching symbols to placeholder bones). */
     allRows?: SpineControlRow[]
     /** Attach or clear a symbol skeleton on a placeholder bone of this row’s skeleton. */
-    onPlaceholderBind?: (hostRowId: string, boneName: string, childRowId: string | null) => void
+    onPlaceholderBind?: (
+      hostRowId: string,
+      boneName: string,
+      childRowId: string | null,
+      op?: 'replace' | 'add' | 'remove',
+    ) => void
     /** Which layout tab is active — drives which stored scale field is edited for root instances. */
     placeholderLayoutTarget?: PlaceholderLayoutKey
     /** When false, skip per-frame position polling (hidden inspector panes). */
@@ -520,8 +526,12 @@ export const SpineInstanceControls = forwardRef<
     row.spine.scale.set(sceneScale)
   }, [sceneScale, row.spine])
 
+  /**
+   * Live scrub readout while playing — only for the **visible** inspector pane. All rows stay mounted
+   * (transport needs refs on every row); without this guard, Play-all would run N RAF loops × setState/frame.
+   */
   useEffect(() => {
-    if (!playing || names.length === 0) return
+    if (!inspectorActive || !playing || names.length === 0) return
     let id = 0
     const tick = () => {
       const te = row.spine.state.tracks[0]
@@ -530,7 +540,14 @@ export const SpineInstanceControls = forwardRef<
     }
     id = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(id)
-  }, [playing, names.length, row.spine])
+  }, [inspectorActive, playing, names.length, row.spine])
+
+  /** When opening the inspector for a skeleton that is already playing, sync the scrub once. */
+  useEffect(() => {
+    if (!inspectorActive || !playing || names.length === 0) return
+    const te = row.spine.state.tracks[0]
+    if (te) setScrubTime(te.trackTime)
+  }, [inspectorActive, playing, names.length, row.spine])
 
   useEffect(() => {
     if (playing || names.length === 0) return
@@ -808,17 +825,20 @@ export const SpineInstanceControls = forwardRef<
           Placeholders ({row.placeholders.length}) {layoutBracket}
         </summary>
         <p className="spine-placeholder-help">
-          Convention-driven bones (see <code className="spine-inline-code">placeholderConvention.ts</code>). Pick
-          another skeleton so it is parented under this one and follows the bone on the canvas.
+          Convention-driven bones (see <code className="spine-inline-code">placeholderConvention.ts</code>). Add one
+          or more symbols on the same placeholder bone — each can be offset independently (drag or Bone offset in the
+          symbol&apos;s inspector).
         </p>
         {row.placeholders.map((ph) => {
-          const boundId = row.placeholderBindings[ph.boneName]
+          const boundIds = normalizePlaceholderBindings(row.placeholderBindings)[ph.boneName] ?? []
           const candidates = allRows.filter(
             (r) =>
               r.id !== row.id &&
+              !boundIds.includes(r.id) &&
               (!r.pinnedUnder ||
                 (r.pinnedUnder.hostRowId === row.id && r.pinnedUnder.boneName === ph.boneName)),
           )
+          const frozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
           return (
             <div key={ph.boneName} className="spine-placeholder-row">
               <div className="spine-placeholder-meta">
@@ -834,22 +854,61 @@ export const SpineInstanceControls = forwardRef<
                   <span className="spine-placeholder-slot"> · slot {ph.slotName}</span>
                 ) : null}
               </div>
-              <label className="spine-placeholder-bind">
-                <span className="spine-field-label">Attach symbol {layoutBracket}</span>
+              {boundIds.length > 0 ? (
+                <ul className="spine-placeholder-attached-list">
+                  {boundIds.map((bid) => {
+                    const sym = allRows.find((r) => r.id === bid)
+                    return (
+                      <li key={bid} className="spine-placeholder-attached-item">
+                        <span className="spine-placeholder-attached-name">
+                          {sym?.displayName ?? bid}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-sm spine-placeholder-remove-btn"
+                          disabled={frozen || !onPlaceholderBind}
+                          onClick={() => onPlaceholderBind?.(row.id, ph.boneName, bid, 'remove')}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : null}
+              <div className="spine-placeholder-bind spine-placeholder-bind--add">
+                <span className="spine-field-label">Add symbol {layoutBracket}</span>
                 <select
+                  key={`add-${row.id}-${ph.boneName}-${boundIds.join('|')}`}
                   className="spine-select"
-                  value={boundId ?? ''}
-                  disabled={row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored}
-                  onChange={(e) => onPlaceholderBind(row.id, ph.boneName, e.target.value || null)}
+                  defaultValue=""
+                  disabled={frozen || candidates.length === 0 || !onPlaceholderBind}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    onPlaceholderBind(row.id, ph.boneName, v, 'add')
+                  }}
                 >
-                  <option value="">— None —</option>
+                  <option value="">
+                    {candidates.length === 0 ? '— No free symbols —' : '— Choose symbol —'}
+                  </option>
                   {candidates.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.displayName}
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
+              {boundIds.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-sm spine-placeholder-clear-bone-btn"
+                  disabled={frozen || !onPlaceholderBind}
+                  onClick={() => onPlaceholderBind(row.id, ph.boneName, null, 'replace')}
+                >
+                  Clear all on this bone
+                </button>
+              ) : null}
             </div>
           )
         })}
