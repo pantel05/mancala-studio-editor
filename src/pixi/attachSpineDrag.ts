@@ -48,11 +48,14 @@ export function attachSpineDrag(
     spine.position.x = snapWorldScalar(spine.position.x)
     spine.position.y = snapWorldScalar(spine.position.y)
     lastLocal.copyFrom(cur)
+    /** Apply skeleton world transforms immediately so every bone/mesh follows the container while dragging. */
+    spine.update(0)
   }
 
   const onWinUp = () => {
     if (!dragging) return
     dragging = false
+    spine.update(0)
     const canDrag = opts?.isDragEnabled ? opts.isDragEnabled() : true
     spine.cursor = canDrag ? 'grab' : 'default'
     window.removeEventListener('pointermove', onWinMove)

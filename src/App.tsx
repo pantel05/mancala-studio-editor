@@ -69,6 +69,10 @@ import {
   restoreSpinePlaybackBackup,
   type SpinePlaybackBackup,
 } from './isolate/spinePlaybackBackup'
+import {
+  applySpineClipAtTimeZero,
+  resetSpineToSetupPoseAndClearTracks,
+} from './isolate/isolateSpineAnimationReset'
 
 const VIEWPORT_LAYOUT_WATERMARK: Record<PlaceholderLayoutKey, string> = {
   main: 'Main view',
@@ -675,6 +679,10 @@ function App() {
   useEffect(() => {
     isolateAnimQueuesRef.current = isolateAnimQueues
   }, [isolateAnimQueues])
+  const isolateSpineOrderRef = useRef(isolateSpineOrder)
+  useEffect(() => {
+    isolateSpineOrderRef.current = isolateSpineOrder
+  }, [isolateSpineOrder])
   const isolateSeqRef = useRef<Array<{ spine: Spine; listener: AnimationStateListener }>>([])
 
   useEffect(() => {
@@ -1097,12 +1105,37 @@ function App() {
     }
   }, [spineRows])
 
+  /** Stop sequence listeners and pause auto-update — skeletons stay on the current frame (use Reset for bind pose). */
   const stopIsolatePlayback = useCallback(() => {
+    for (const { spine, listener } of isolateSeqRef.current) {
+      spine.state.removeListener(listener)
+      spine.autoUpdate = false
+    }
+    isolateSeqRef.current = []
+    setIsolatePlaying(false)
+  }, [])
+
+  /** Full clear: no listeners; bind pose then first frame of each queue’s first clip (or bind only if queue empty). */
+  const resetIsolateAnimations = useCallback(() => {
     for (const { spine, listener } of isolateSeqRef.current) {
       spine.state.removeListener(listener)
     }
     isolateSeqRef.current = []
     setIsolatePlaying(false)
+    const labels: Record<string, string> = {}
+    for (const id of isolateSpineOrderRef.current) {
+      const row = spineRowsRef.current.find((r) => r.id === id)
+      const q = isolateAnimQueuesRef.current[id] ?? []
+      if (row) {
+        resetSpineToSetupPoseAndClearTracks(row.spine)
+        if (q.length > 0) {
+          applySpineClipAtTimeZero(row.spine, q[0]!, isolateAnimSpeedRef.current[id] ?? 1)
+        }
+        row.spine.autoUpdate = false
+      }
+      labels[id] = q.length > 0 ? q[0]! : '—'
+    }
+    setIsolateAnimLabels(labels)
   }, [])
 
   const startIsolatePlayback = useCallback(() => {
@@ -1118,20 +1151,23 @@ function App() {
         continue
       }
       const spine = row.spine
-      spine.state.clearTrack(0)
+      resetSpineToSetupPoseAndClearTracks(spine)
       spine.autoUpdate = true
-      spine.state.timeScale = isolateAnimSpeedRef.current[id] ?? 1
       const progress = { index: 0 }
       labels[id] = q[0]!
-      spine.state.setAnimation(0, q[0]!, false)
+      applySpineClipAtTimeZero(spine, q[0]!, isolateAnimSpeedRef.current[id] ?? 1)
       const listener: AnimationStateListener = {
-        complete: (entry) => {
-          if (entry.loop) return
+        complete: (e) => {
+          if (e.loop) return
           const queue = isolateAnimQueuesRef.current[id] ?? []
           progress.index++
           if (progress.index < queue.length) {
             const name = queue[progress.index]!
-            spine.state.setAnimation(0, name, false)
+            const te = spine.state.setAnimation(0, name, false)
+            if (te) {
+              te.mixDuration = 0
+              te.trackTime = 0
+            }
             setIsolateAnimLabels((prev) => ({ ...prev, [id]: name }))
           } else {
             const last = queue.length > 0 ? queue[queue.length - 1]! : '—'
@@ -1188,7 +1224,17 @@ function App() {
     isolateBackupRef.current = null
     if (b) pendingIsolateRestoreRef.current = b
     setIsolateMode(false)
+    // Hard isolate teardown: clear all isolate-only runtime/UI state so nothing is retained after exit.
+    isolateSeqRef.current = []
+    isolateSpineOrderRef.current = []
+    isolateAnimQueuesRef.current = {}
+    isolateAnimSpeedRef.current = {}
+    setIsolateSpineOrder([])
+    setIsolateAnimQueues({})
+    setIsolateAnimSpeed({})
     setIsolateAnimLabels({})
+    setIsolatePlaying(false)
+    isolateFitContentKeyRef.current = ''
   }, [stopIsolatePlayback])
 
   useLayoutEffect(() => {
@@ -2626,6 +2672,7 @@ function App() {
               isolatePlaying={isolatePlaying}
               onPlaySequences={startIsolatePlayback}
               onStopSequences={stopIsolatePlayback}
+              onResetAnimations={resetIsolateAnimations}
             />
           </aside>
         ) : (

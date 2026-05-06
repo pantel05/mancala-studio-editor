@@ -742,6 +742,8 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       }
 
       let anchorThrottlePhase = 0
+      /** When direct world children change (e.g. isolate add/remove), always repaint anchors — throttle can skip `clear()` and leave stale crosses. */
+      let lastWorldDirectSpineCount = -1
       application.ticker.add(() => {
         const wld = worldRef.current
         const appLive = appRef.current
@@ -806,8 +808,11 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
             }
             const liveAnim = anySpineAutoUpdating(wld)
             anchorThrottlePhase = (anchorThrottlePhase + 1) & 1
+            const spineCount = spines.length
+            const spineCountChanged = spineCount !== lastWorldDirectSpineCount
+            lastWorldDirectSpineCount = spineCount
             const paintAnchors =
-              geomDirty || liveAnim || anchorThrottlePhase === 0
+              geomDirty || liveAnim || anchorThrottlePhase === 0 || spineCountChanged
             if (paintAnchors) {
               paintWorldGridSpineAnchors(wgAnchors, wld, spines)
             }

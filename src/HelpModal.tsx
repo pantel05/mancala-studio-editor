@@ -487,7 +487,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     While dragging a clip, the row being moved shows a <strong>blue outline</strong>; the row under the pointer shows a <strong>blue top accent</strong> so you can see the insert position.
                   </li>
                   <li>
-                    <strong>Play sequences</strong> runs every skeleton’s queue <strong>in parallel</strong> (track 0, in order, no loop). <strong>Stop</strong> clears listeners and stops playback.
+                    <strong>Play sequences</strong> runs every skeleton’s queue <strong>in parallel</strong> (track 0, in order, no loop). Each new run resets tracks and bind pose first so nothing from the previous run is blended or left on screen. <strong>Stop</strong> removes sequence listeners and pauses auto-update on the current frame. <strong>Reset</strong> clears tracks and mesh deform, returns to bind pose, then applies the <strong>first frame (time 0)</strong> of the <strong>first clip</strong> in each queue when a queue exists (otherwise bind pose only); captions match that clip.
                   </li>
                   <li>
                     <strong>Anim speed</strong> (per skeleton, 0–3×) maps to Spine <code>AnimationState.timeScale</code> for that instance while isolating.
@@ -497,7 +497,8 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Draw order &amp; canvas</h3>
                 <ul className="help-list">
                   <li><strong>In front</strong> / <strong>Behind</strong> reorder the isolate list: the first entry draws on top among isolated skeletons.</li>
-                  <li>Drag skeletons on the canvas to reposition them; the view refits when you add or remove skeletons, not when you only change draw order.</li>
+                  <li>Drag skeletons on the canvas to reposition them; the skeleton is updated on every drag step so all bones and meshes stay aligned with the instance.</li>
+                  <li>The view refits when you add or remove skeletons, not when you only change draw order.</li>
                 </ul>
 
                 <h3 className="help-section-title">Captions</h3>

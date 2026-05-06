@@ -30,6 +30,8 @@ export type IsolateModePanelProps = {
   isolatePlaying: boolean
   onPlaySequences: () => void
   onStopSequences: () => void
+  /** Bind pose + clear tracks + reset captions to first queue clip (fixes stuck layers after stop/play). */
+  onResetAnimations: () => void
 }
 
 function rowById(rows: SpineControlRow[], id: string): SpineControlRow | undefined {
@@ -48,6 +50,7 @@ export function IsolateModePanel({
   isolatePlaying,
   onPlaySequences,
   onStopSequences,
+  onResetAnimations,
 }: IsolateModePanelProps) {
   const inSet = new Set(isolateSpineOrder)
   const addable = spineRows.filter((r) => !inSet.has(r.id))
@@ -198,6 +201,15 @@ export function IsolateModePanel({
           </button>
           <button type="button" className="btn btn-compact" onClick={onStopSequences} disabled={!isolatePlaying}>
             Stop
+          </button>
+          <button
+            type="button"
+            className="btn btn-compact"
+            onClick={onResetAnimations}
+            disabled={isolateSpineOrder.length === 0}
+            title="Clear playback state, return to bind pose, then pose the first clip in each queue at time 0 (or bind pose only if the queue is empty)"
+          >
+            Reset
           </button>
         </div>
       </div>
