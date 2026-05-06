@@ -15,6 +15,7 @@ type Section =
   | 'animations'
   | 'viewport'
   | 'isolate'
+  | 'scenario'
   | 'project'
   | 'validation'
   | 'shortcuts'
@@ -30,10 +31,11 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'animations',   label: '⑦ Animation States' },
   { id: 'viewport',     label: '⑧ Viewport & canvas' },
   { id: 'isolate',      label: '⑨ Isolate mode' },
-  { id: 'project',      label: '⑩ Save & Open project' },
-  { id: 'validation',   label: '⑪ Validation panel' },
-  { id: 'shortcuts',    label: '⑫ Keyboard shortcuts' },
-  { id: 'browser',      label: '⑬ Browser support' },
+  { id: 'scenario',     label: '⑩ Scenario mode' },
+  { id: 'project',      label: '⑪ Save & Open project' },
+  { id: 'validation',   label: '⑫ Validation & console' },
+  { id: 'shortcuts',    label: '⑬ Keyboard shortcuts' },
+  { id: 'browser',      label: '⑭ Browser support' },
 ]
 
 export function HelpModal({ open, onClose }: HelpModalProps) {
@@ -133,6 +135,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <strong>Isolate mode</strong> (Game view toolbar) — preview chosen skeletons with custom animation playlists; root and nested symbols can be shown on their own without the rest of the scene.
                   </li>
                   <li>
+                    <strong>Scenario mode</strong> (Game view toolbar) — build a <strong>composition timeline</strong> so several Spine instances play in sync on one clock: animation clips per row, markers, loop, and FPS for review. The timeline is stored in the <code>.mancala</code> file when you save.
+                  </li>
+                  <li>
                     <strong>Save</strong> the project as a <code>.mancala</code> file via <em>Project → Save</em> or <kbd>⌘S</kbd>.
                     All Spine assets and sprite images are embedded in the file.
                   </li>
@@ -145,7 +150,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <tr><td><strong>Hierarchy panel</strong> (left)</td><td>Lists all scene objects with colour-coded type badges (<span className="help-badge-inline help-badge-inline--spine">SKL</span> Spine, <span className="help-badge-inline help-badge-inline--sprite">IMG</span> Image); controls visibility, lock, and layer order.</td></tr>
                     <tr><td><strong>Canvas</strong> (centre)</td><td>The live PixiJS renderer — drag objects, zoom, pan, view the world grid.</td></tr>
                     <tr><td><strong>Inspector panel</strong> (right)</td><td>Per-object settings: position, animation/skin/scale for Spine; position/scale/rotation/opacity for sprites.</td></tr>
-                    <tr><td><strong>Validation panel</strong> (bottom)</td><td>Real-time errors and warnings for the whole scene.</td></tr>
+                    <tr><td><strong>Bottom console</strong></td><td><strong>Validation</strong> tab — real-time errors and warnings for the whole scene. <strong>Scenario</strong> tab — composition timeline when Scenario mode is on (or after opening a project that was saved in Scenario mode).</td></tr>
                     <tr><td><strong>Isolate sidebar</strong></td><td>Replaces the Hierarchy while <em>Isolate mode</em> is on: add skeletons, build animation queues, control playback and draw order. Static sprites are hidden on the canvas.</td></tr>
                   </tbody>
                 </table>
@@ -517,6 +522,48 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
               </>
             )}
 
+            {active === 'scenario' && (
+              <>
+                <h3 className="help-section-title">Scenario mode (composition timeline)</h3>
+                <p className="help-p">
+                  <strong>Scenario mode</strong> is for reviewing how <strong>multiple Spine skeletons</strong> behave together on a single <strong>composition clock</strong> (seconds along the timeline). It is separate from <em>Isolate mode</em> (per-skeleton playlists) and from each skeleton&apos;s own Inspector transport.
+                </p>
+
+                <h3 className="help-section-title">Turning it on</h3>
+                <ul className="help-list">
+                  <li>Use <strong>Scenario mode</strong> in the Game view toolbar. The editor switches the layout target to <strong>Main</strong> (so placeholder variants line up with the timeline), pauses normal scene-wide playback, and opens the bottom console on the <strong>Scenario</strong> tab.</li>
+                  <li>Exit Scenario mode from the same control. Leaving Scenario restores the layout tab you had before entering (when applicable).</li>
+                </ul>
+
+                <h3 className="help-section-title">Timeline rows &amp; clips</h3>
+                <ul className="help-list">
+                  <li>One <strong>lane</strong> per Spine instance (not static sprites). Lanes are ordered like the scene hierarchy at first entry; you can reorder lanes with drag-and-drop — this only affects the timeline stack, not the main Hierarchy draw order.</li>
+                  <li>Each row holds <strong>clips</strong>: segments of a chosen animation between start and end times on the composition clock. Gaps between clips hide that skeleton for that interval (nested symbols can still appear when their own clip is active).</li>
+                  <li>The <strong>playhead</strong> shows the current composition time. Drag it or click the ruler to scrub. While Scenario mode is on, use the <strong>title bar Play / Pause / Restart</strong> for transport, or <strong>Play / Pause</strong> in the Scenario panel (same composition clock).</li>
+                </ul>
+
+                <h3 className="help-section-title">Markers, loop, FPS</h3>
+                <ul className="help-list">
+                  <li><strong>Markers</strong> are named cues on the ruler — click to jump the playhead, drag to move them in time.</li>
+                  <li><strong>Loop composition</strong> repeats when playback reaches the end of the timeline.</li>
+                  <li><strong>FPS</strong> only affects the optional <strong>frame number readout</strong> beside the ruler (<code>frame ≈ time × FPS</code>). Playback still advances in real time.</li>
+                </ul>
+
+                <h3 className="help-section-title">Inspector while in Scenario mode</h3>
+                <p className="help-p">
+                  Per-skeleton <strong>Play / Pause / Loop / Speed / Scrub</strong> in the Inspector are <strong>locked</strong> so they do not fight the composition clock. You can still edit placement, skins, bindings, and other non-transport fields.
+                </p>
+
+                <h3 className="help-section-title">Saving &amp; reopening</h3>
+                <p className="help-p">
+                  When you <strong>Save</strong> a <code>.mancala</code> project, the file stores the scenario data: tracks and clips, lane order, markers, loop, FPS, current composition time, and whether Scenario mode was on. Opening the project <strong>remaps</strong> timeline rows to the loaded skeletons (by display name); rows that no longer exist are dropped.
+                </p>
+                <p className="help-p help-note">
+                  Clearing the scene or removing all Spine objects turns Scenario mode off and clears the timeline for that session.
+                </p>
+              </>
+            )}
+
             {active === 'project' && (
               <>
                 <h3 className="help-section-title">Project files (.mancala)</h3>
@@ -537,6 +584,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <li>Placeholder bindings (which child skeletons are attached to which bones — one ID or a list of IDs per bone when multiple symbols share a placeholder)</li>
                   <li>Ignored placeholder policy flags</li>
                   <li>Backdrop mode and active layout target (Main / Portrait / Landscape / Tablet)</li>
+                  <li>
+                    <strong>Scenario mode</strong> data when present: composition <strong>tracks</strong> (per Spine row), <strong>clips</strong> (animation segments on the global clock), <strong>lane order</strong>, <strong>markers</strong>, loop, FPS, composition time, and whether Scenario mode was active — all under <code>project.json</code> inside the archive
+                  </li>
                 </ul>
 
                 <h3 className="help-section-title">What is NOT saved</h3>
@@ -569,10 +619,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
 
             {active === 'validation' && (
               <>
-                <h3 className="help-section-title">Validation panel</h3>
+                <h3 className="help-section-title">Validation &amp; bottom console</h3>
                 <p className="help-p">
-                  The panel at the bottom of the screen shows real-time issues for all objects in the scene.
-                  It updates automatically whenever the scene changes.
+                  The bottom area has two tabs: <strong>Validation</strong> (default) and <strong>Scenario</strong> (composition timeline UI when you use Scenario mode). The Validation tab lists real-time issues for all objects in the scene and updates automatically whenever the scene changes.
                 </p>
 
                 <h3 className="help-section-title">Issue types</h3>
