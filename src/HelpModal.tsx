@@ -487,7 +487,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     While dragging a clip, the row being moved shows a <strong>blue outline</strong>; the row under the pointer shows a <strong>blue top accent</strong> so you can see the insert position.
                   </li>
                   <li>
-                    <strong>Play sequences</strong> runs every skeleton’s queue <strong>in parallel</strong> (track 0, in order, no loop). Each new run resets tracks and bind pose first so nothing from the previous run is blended or left on screen. <strong>Stop</strong> removes sequence listeners and pauses auto-update on the current frame. <strong>Reset</strong> clears tracks and mesh deform, returns to bind pose, then applies the <strong>first frame (time 0)</strong> of the <strong>first clip</strong> in each queue when a queue exists (otherwise bind pose only); captions match that clip.
+                    The <strong>title bar Play / Pause / Restart</strong> controls run isolate playback: each skeleton’s queue plays <strong>in parallel</strong> (track 0, in order, no loop). Each new run resets tracks and bind pose first so nothing from the previous run is blended or left on screen. <strong>Pause</strong> stops sequence listeners and pauses auto-update on the current frame. <strong>Restart</strong> clears tracks and mesh deform, returns to bind pose, then applies the <strong>first frame (time 0)</strong> of the <strong>first clip</strong> in each queue when a queue exists (otherwise bind pose only); captions match that clip.
                   </li>
                   <li>
                     <strong>Anim speed</strong> (per skeleton, 0–3×) maps to Spine <code>AnimationState.timeScale</code> for that instance while isolating.

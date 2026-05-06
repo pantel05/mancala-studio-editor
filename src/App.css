@@ -311,6 +311,34 @@
 
 .transport-play:hover {
   color: #7ee787;
+  background: rgba(34, 197, 94, 0.16);
+}
+
+.transport-play:active,
+.transport-play.is-toggled {
+  color: #7ee787;
+  background: rgba(34, 197, 94, 0.22);
+}
+
+.transport-pause:hover {
+  color: #f7b267;
+  background: rgba(249, 115, 22, 0.16);
+}
+
+.transport-pause:active,
+.transport-pause.is-toggled {
+  color: #f7b267;
+  background: rgba(249, 115, 22, 0.22);
+}
+
+.transport-restart:hover {
+  color: #ff7b72;
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.transport-restart:active {
+  color: #ff7b72;
+  background: rgba(239, 68, 68, 0.22);
 }
 
 .transport-pause-icon {
@@ -2813,12 +2841,6 @@
   font-size: 10px;
   line-height: 1.35;
   color: var(--text-muted);
-}
-
-.isolate-panel-transport {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .isolate-add-row {

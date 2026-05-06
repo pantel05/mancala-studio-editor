@@ -27,11 +27,6 @@ export type IsolateModePanelProps = {
   onIsolateAnimSpeedChange: (id: string, speed: number) => void
   /** Clear per-object isolate metadata when removing from the list. */
   onIsolateSpineMetaRemove: (id: string) => void
-  isolatePlaying: boolean
-  onPlaySequences: () => void
-  onStopSequences: () => void
-  /** Bind pose + clear tracks + reset captions to first queue clip (fixes stuck layers after stop/play). */
-  onResetAnimations: () => void
 }
 
 function rowById(rows: SpineControlRow[], id: string): SpineControlRow | undefined {
@@ -47,10 +42,6 @@ export function IsolateModePanel({
   isolateAnimSpeed,
   onIsolateAnimSpeedChange,
   onIsolateSpineMetaRemove,
-  isolatePlaying,
-  onPlaySequences,
-  onStopSequences,
-  onResetAnimations,
 }: IsolateModePanelProps) {
   const inSet = new Set(isolateSpineOrder)
   const addable = spineRows.filter((r) => !inSet.has(r.id))
@@ -186,32 +177,12 @@ export function IsolateModePanel({
       <div className="isolate-panel-head">
         <div className="isolate-panel-title">Isolate mode</div>
         <p className="isolate-panel-help">
-          Starts with an empty canvas — add skeletons from the hierarchy below (root or nested). Each object plays its animation list in order (in parallel
-          with others). Drag on the canvas to move instances; use <strong>In front</strong> / <strong>Behind</strong> for draw
-          order (which skeleton paints on top). Reorder clips via the ⋮⋮ handle or row arrows. Exit from the canvas when done.
+          Starts with an empty canvas — add skeletons from the hierarchy below (root or nested). Use the <strong>title bar</strong>{' '}
+          <strong>Play</strong>, <strong>Pause</strong>, and <strong>Restart</strong> buttons (same as the main editor) to run, stop, or reset isolate
+          queues. Each object plays its animation list in order (in parallel with others). Drag on the canvas to move instances; use{' '}
+          <strong>In front</strong> / <strong>Behind</strong> for draw order (which skeleton paints on top). Reorder clips via the ⋮⋮ handle or row
+          arrows. Exit from the canvas when done.
         </p>
-        <div className="isolate-panel-transport">
-          <button
-            type="button"
-            className="btn btn-compact"
-            onClick={onPlaySequences}
-            disabled={isolatePlaying || isolateSpineOrder.length === 0}
-          >
-            Play sequences
-          </button>
-          <button type="button" className="btn btn-compact" onClick={onStopSequences} disabled={!isolatePlaying}>
-            Stop
-          </button>
-          <button
-            type="button"
-            className="btn btn-compact"
-            onClick={onResetAnimations}
-            disabled={isolateSpineOrder.length === 0}
-            title="Clear playback state, return to bind pose, then pose the first clip in each queue at time 0 (or bind pose only if the queue is empty)"
-          >
-            Reset
-          </button>
-        </div>
       </div>
 
       <div className="isolate-add-row">
@@ -247,8 +218,11 @@ export function IsolateModePanel({
           isolateSpineOrder.map((id) => {
             const row = rowById(spineRows, id)
             if (!row) return null
+            if (row.spine.destroyed) return null
+            const skData = row.spine.skeleton?.data
+            if (!skData) return null
             const q = isolateAnimQueues[id] ?? []
-            const allNames = row.spine.skeleton.data.animations.map((a) => a.name)
+            const allNames = skData.animations.map((a) => a.name)
             const idxInIsolate = isolateSpineOrder.indexOf(id)
             const speed = isolateAnimSpeed[id] ?? 1
             return (

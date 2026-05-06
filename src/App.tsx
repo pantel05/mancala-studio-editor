@@ -669,6 +669,8 @@ function App() {
   const [isolateAnimLabels, setIsolateAnimLabels] = useState<Record<string, string>>({})
   /** Per isolated skeleton: Spine {@link AnimationState#timeScale} while in isolate mode (1 = normal). */
   const [isolateAnimSpeed, setIsolateAnimSpeed] = useState<Record<string, number>>({})
+  /** Title-bar play toggle for normal (non-isolate) mode. */
+  const [scenePlaying, setScenePlaying] = useState(false)
   const isolateAnimSpeedRef = useRef(isolateAnimSpeed)
   useEffect(() => {
     isolateAnimSpeedRef.current = isolateAnimSpeed
@@ -1079,6 +1081,7 @@ function App() {
   )
 
   const playAll = useCallback(() => {
+    setScenePlaying(true)
     for (const row of spineRows) {
       if (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored) continue
       spineHandleById.current.get(row.id)?.prepareSyncStart()
@@ -1092,6 +1095,7 @@ function App() {
   }, [spineRows])
 
   const pauseAll = useCallback(() => {
+    setScenePlaying(false)
     for (const row of spineRows) {
       if (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored) continue
       spineHandleById.current.get(row.id)?.pausePlayback()
@@ -1108,8 +1112,10 @@ function App() {
   /** Stop sequence listeners and pause auto-update — skeletons stay on the current frame (use Reset for bind pose). */
   const stopIsolatePlayback = useCallback(() => {
     for (const { spine, listener } of isolateSeqRef.current) {
-      spine.state.removeListener(listener)
-      spine.autoUpdate = false
+      if (!spine.destroyed) {
+        spine.state.removeListener(listener)
+        spine.autoUpdate = false
+      }
     }
     isolateSeqRef.current = []
     setIsolatePlaying(false)
@@ -1118,7 +1124,9 @@ function App() {
   /** Full clear: no listeners; bind pose then first frame of each queue’s first clip (or bind only if queue empty). */
   const resetIsolateAnimations = useCallback(() => {
     for (const { spine, listener } of isolateSeqRef.current) {
-      spine.state.removeListener(listener)
+      if (!spine.destroyed) {
+        spine.state.removeListener(listener)
+      }
     }
     isolateSeqRef.current = []
     setIsolatePlaying(false)
@@ -1128,10 +1136,10 @@ function App() {
       const q = isolateAnimQueuesRef.current[id] ?? []
       if (row) {
         resetSpineToSetupPoseAndClearTracks(row.spine)
-        if (q.length > 0) {
+        if (!row.spine.destroyed && q.length > 0) {
           applySpineClipAtTimeZero(row.spine, q[0]!, isolateAnimSpeedRef.current[id] ?? 1)
         }
-        row.spine.autoUpdate = false
+        if (!row.spine.destroyed) row.spine.autoUpdate = false
       }
       labels[id] = q.length > 0 ? q[0]! : '—'
     }
@@ -1180,6 +1188,37 @@ function App() {
     }
     setIsolateAnimLabels(labels)
   }, [isolateSpineOrder, spineRows, stopIsolatePlayback])
+
+  /** Title bar ▶ / ⏸ / ↺: scene transport in normal mode; isolate queue play / stop / reset in isolate mode. */
+  const transportPlay = useCallback(() => {
+    if (isolateMode) {
+      if (isolateSpineOrder.length === 0) return
+      startIsolatePlayback()
+      return
+    }
+    playAll()
+  }, [isolateMode, isolateSpineOrder.length, playAll, startIsolatePlayback])
+
+  const transportPause = useCallback(() => {
+    if (isolateMode) {
+      stopIsolatePlayback()
+      return
+    }
+    pauseAll()
+  }, [isolateMode, pauseAll, stopIsolatePlayback])
+
+  const transportRestart = useCallback(() => {
+    if (isolateMode) {
+      resetIsolateAnimations()
+      return
+    }
+    restartAll()
+  }, [isolateMode, resetIsolateAnimations, restartAll])
+
+  useEffect(() => {
+    if (isolateMode) return
+    if (spineRows.length === 0) setScenePlaying(false)
+  }, [isolateMode, spineRows.length])
 
   const enterIsolateMode = useCallback(() => {
     if (spineRowsRef.current.length === 0) return
@@ -1792,6 +1831,7 @@ function App() {
           rowId: string
           oldSpine: Spine
           newSpine: Spine
+          oldSkinName: string | null
           displayName: string
           placeholderPolicyFrozen: boolean
           /** Carry the row's existing ignored flag so a texture-only swap doesn't un-ignore it. */
@@ -1845,6 +1885,7 @@ function App() {
             rowId: row.id,
             oldSpine: row.spine,
             newSpine: res.spine,
+            oldSkinName: row.spine.skeleton.skin?.name ?? null,
             displayName: row.displayName,
             placeholderPolicyFrozen,
             // Preserve the user's "Ignore" choice across atlas-tag swaps — swapping
@@ -1881,8 +1922,34 @@ function App() {
           return mergedAnim.length > 0 ? mergeSpineValidationIssues(withPh, mergedAnim) : withPh
         })
 
+        if (isolateMode) {
+          stopIsolatePlayback()
+        }
+
         for (const p of patches) {
+          if (p.oldSkinName) {
+            try {
+              p.newSpine.skeleton.setSkinByName(p.oldSkinName)
+              p.newSpine.skeleton.setSlotsToSetupPose()
+              p.newSpine.update(0)
+            } catch {
+              // Missing skin on the swapped atlas variant: keep runtime default skin.
+            }
+          }
           stageRef.current?.swapSpineInstance(p.oldSpine, p.newSpine)
+        }
+
+        if (isolateMode) {
+          const isolated = new Set(isolateSpineOrderRef.current)
+          for (const p of patches) {
+            if (!isolated.has(p.rowId)) continue
+            resetSpineToSetupPoseAndClearTracks(p.newSpine)
+            const q = isolateAnimQueuesRef.current[p.rowId] ?? []
+            if (q.length > 0) {
+              applySpineClipAtTimeZero(p.newSpine, q[0]!, isolateAnimSpeedRef.current[p.rowId] ?? 1)
+            }
+            p.newSpine.autoUpdate = false
+          }
         }
 
         setSpineRows((prev) =>
@@ -1908,7 +1975,7 @@ function App() {
         setBusy(false)
       }
     },
-    [busy, commonPlaceholderNames],
+    [busy, commonAnimationNames, commonPlaceholderNames, isolateMode, stopIsolatePlayback],
   )
 
   const removeSpineFromProject = useCallback(
@@ -2605,14 +2672,24 @@ function App() {
           </div>
         </div>
         <div className="editor-titlebar-center">
-          {(spineRows.length > 0 || spriteRows.length > 0) && !isolateMode && (
-            <div className="editor-transport" role="group" aria-label="Scene transport">
+          {(spineRows.length > 0 || spriteRows.length > 0 || isolateMode) && (
+            <div
+              className="editor-transport"
+              role="group"
+              aria-label={isolateMode ? 'Isolate mode transport' : 'Scene transport'}
+            >
               <button
                 type="button"
-                className="transport-btn transport-play"
-                onClick={playAll}
-                title="Play all"
-                aria-label="Play all"
+                className={`transport-btn transport-play${
+                  (isolateMode ? isolatePlaying : scenePlaying) ? ' is-toggled' : ''
+                }`}
+                onClick={transportPlay}
+                disabled={
+                  isolateMode && (isolatePlaying || isolateSpineOrder.length === 0)
+                }
+                title={isolateMode ? 'Play isolate animation queues (parallel)' : 'Play all'}
+                aria-label={isolateMode ? 'Play isolate queues' : 'Play all'}
+                aria-pressed={isolateMode ? isolatePlaying : scenePlaying}
               >
                 <span className="transport-icon" aria-hidden="true">
                   ▶
@@ -2620,19 +2697,30 @@ function App() {
               </button>
               <button
                 type="button"
-                className="transport-btn transport-pause"
-                onClick={pauseAll}
-                title="Pause all"
-                aria-label="Pause all"
+                className={`transport-btn transport-pause${
+                  isolateMode && !isolatePlaying && isolateSpineOrder.length > 0 ? ' is-toggled' : ''
+                }`}
+                onClick={transportPause}
+                disabled={isolateMode && !isolatePlaying}
+                title={isolateMode ? 'Stop isolate playback (pause on current frame)' : 'Pause all'}
+                aria-label={isolateMode ? 'Stop isolate playback' : 'Pause all'}
+                aria-pressed={
+                  isolateMode ? (!isolatePlaying && isolateSpineOrder.length > 0) : undefined
+                }
               >
                 <span className="transport-icon transport-pause-icon" aria-hidden="true" />
               </button>
               <button
                 type="button"
                 className="transport-btn transport-restart"
-                onClick={restartAll}
-                title="Restart all"
-                aria-label="Restart all"
+                onClick={transportRestart}
+                disabled={isolateMode && isolateSpineOrder.length === 0}
+                title={
+                  isolateMode
+                    ? 'Reset isolate queues (first frame of first clip per skeleton)'
+                    : 'Restart all'
+                }
+                aria-label={isolateMode ? 'Reset isolate queues' : 'Restart all'}
               >
                 <span className="transport-icon" aria-hidden="true">
                   ↺
@@ -2669,10 +2757,6 @@ function App() {
                   return rest
                 })
               }}
-              isolatePlaying={isolatePlaying}
-              onPlaySequences={startIsolatePlayback}
-              onStopSequences={stopIsolatePlayback}
-              onResetAnimations={resetIsolateAnimations}
             />
           </aside>
         ) : (
