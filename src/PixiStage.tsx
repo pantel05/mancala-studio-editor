@@ -707,9 +707,12 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         },
       )
 
+      // Pixi `resizeTo: host` only queues resizes on **window** resize — not when the host
+      // grows/shrinks from flex layout (e.g. dragging the validation panel). Observe the host
+      // and forward size changes so the canvas matches the viewport.
       hostResizeObserver = new ResizeObserver(() => {
         if (cancelled) return
-        syncViewportCenterShell(application, host, centerShell, stageScreenSizeRef)
+        application.queueResize()
       })
       hostResizeObserver.observe(host)
 

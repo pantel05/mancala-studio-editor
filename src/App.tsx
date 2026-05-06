@@ -698,8 +698,6 @@ function App() {
   const [scenarioFps, setScenarioFps] = useState(30)
   const [scenarioMarkers, setScenarioMarkers] = useState<ScenarioMarker[]>([])
   const scenarioGapHiddenRef = useRef(new Set<string>())
-  /** Serialized solo pinned set — triggers placeholder reconcile when it changes. */
-  const lastScenarioSoloKeyRef = useRef('\u0000')
   const scenarioModeRef = useRef(false)
   const scenarioLoopRef = useRef(false)
   const scenarioTimeRef = useRef(0)
@@ -856,14 +854,13 @@ function App() {
     const stage = stageRef.current
     if (!stage) return
     const want = computeScenarioSoloPinnedChildIds(rows, scenarioGapHiddenRef.current)
-    const key = [...want].sort().join(',')
-    if (key === lastScenarioSoloKeyRef.current) return
-    lastScenarioSoloKeyRef.current = key
     const rowsPayload = rows.map((r) => ({
       id: r.id,
       spine: r.spine,
       placeholderBindings: r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored ? {} : r.placeholderBindings,
     }))
+    // Always reconcile after applyScenario + visibility: skipping when the solo-child *set*
+    // was unchanged left nested symbols with stale world transforms (wrong positions / scale).
     stage.reconcilePlaceholderAttachments(
       rowsPayload,
       layout,
@@ -920,36 +917,34 @@ function App() {
     )
   }, [])
 
+  // Normal mode only — do not depend on scenario timeline state (that caused redundant
+  // reconcilePlaceholderAttachments + spine visibility passes when Scenario was off).
+  // Skip while Isolate is on: useLayoutEffect already reconciles with isolateRootChildIds; a second
+  // reconcile here (without isolate options) was undoing floated nested symbols — e.g. after @1x/@2x.
   useEffect(() => {
-    if (!scenarioMode) {
-      lastScenarioSoloKeyRef.current = '\u0000'
-      scenarioGapHiddenRef.current.clear()
-      stageRef.current?.reconcilePlaceholderAttachments(
-        spineRows.map((r) => ({
-          id: r.id,
-          spine: r.spine,
-          placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
-        })),
-        placeholderLayoutTarget,
-      )
-      for (const row of spineRows) {
-        row.spine.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
-        const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
-        row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
-      }
-      return
+    if (scenarioMode) return
+    if (isolateMode) return
+    scenarioGapHiddenRef.current.clear()
+    stageRef.current?.reconcilePlaceholderAttachments(
+      spineRows.map((r) => ({
+        id: r.id,
+        spine: r.spine,
+        placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
+      })),
+      placeholderLayoutTarget,
+    )
+    for (const row of spineRows) {
+      row.spine.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
+      const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
+      row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
     }
-    if (scenarioTransportPlayingRef.current) return
+  }, [scenarioMode, isolateMode, spineRows, placeholderLayoutTarget])
+
+  // Scenario pose when not playing — RAF loop handles updates while transport is running.
+  useEffect(() => {
+    if (!scenarioMode || scenarioTransportPlaying) return
     syncScenarioSpineWorld(scenarioCompTime)
-  }, [
-    spineRows,
-    placeholderLayoutTarget,
-    scenarioMode,
-    scenarioTracks,
-    scenarioCompTime,
-    scenarioTransportPlaying,
-    syncScenarioSpineWorld,
-  ])
+  }, [scenarioMode, scenarioTransportPlaying, scenarioCompTime, scenarioTracks, syncScenarioSpineWorld])
 
   useEffect(() => {
     for (const row of spriteRows) {
@@ -1470,10 +1465,12 @@ function App() {
 
   useEffect(() => {
     if (!scenarioMode || !scenarioTransportPlaying) return
-    let frameId = 0
+    const rafRef = { id: 0 }
+    let cancelled = false
     let last = performance.now()
     let lastUiMs = performance.now()
     const tick = (now: number) => {
+      if (cancelled) return
       const dt = (now - last) / 1000
       last = now
       let t = scenarioTimeRef.current + dt
@@ -1491,6 +1488,7 @@ function App() {
           scheduleNext = false
         }
       }
+      if (cancelled) return
       if (scheduleNext) {
         scenarioTimeRef.current = t
         syncScenarioSpineWorld(t)
@@ -1498,11 +1496,14 @@ function App() {
           lastUiMs = now
           setScenarioCompTime(t)
         }
-        frameId = requestAnimationFrame(tick)
+        rafRef.id = requestAnimationFrame(tick)
       }
     }
-    frameId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frameId)
+    rafRef.id = requestAnimationFrame(tick)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(rafRef.id)
+    }
   }, [scenarioMode, scenarioTransportPlaying, syncScenarioSpineWorld])
 
   const enableScenarioMode = useCallback(() => {
@@ -1532,8 +1533,8 @@ function App() {
     setScenarioMode(false)
     setScenarioTransportPlaying(false)
     scenarioGapHiddenRef.current.clear()
-    setScenarioLaneOrder([])
-    setScenarioMarkers([])
+    // Keep lane order, markers, and tracks — they still serialize in .mancala and reload correctly.
+    // Clearing them here made "save after turning Scenario off" drop markers from the file.
     setConsoleTab('validation')
     pauseAll()
   }, [pauseAll])
@@ -1575,7 +1576,6 @@ function App() {
       setScenarioMode(false)
       setScenarioTransportPlaying(false)
       scenarioGapHiddenRef.current.clear()
-      setScenarioLaneOrder([])
     }
     pauseAll()
     const scene = captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current)

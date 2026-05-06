@@ -532,7 +532,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Turning it on</h3>
                 <ul className="help-list">
                   <li>Use <strong>Scenario mode</strong> in the Game view toolbar. The editor switches the layout target to <strong>Main</strong> (so placeholder variants line up with the timeline), pauses normal scene-wide playback, and opens the bottom console on the <strong>Scenario</strong> tab.</li>
-                  <li>Exit Scenario mode from the same control. Leaving Scenario restores the layout tab you had before entering (when applicable).</li>
+                  <li>
+                    Exit Scenario mode from the same control. Leaving Scenario restores the layout tab you had before entering (when applicable). Your <strong>timeline data</strong> (markers, clips, lane order) <strong>stays in memory</strong> so a subsequent <strong>Save</strong> still writes it into the <code>.mancala</code> file even when Scenario mode is off.
+                  </li>
                 </ul>
 
                 <h3 className="help-section-title">Timeline rows &amp; clips</h3>
