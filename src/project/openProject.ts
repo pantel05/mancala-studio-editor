@@ -1,5 +1,11 @@
 import JSZip from 'jszip'
-import { PROJECT_FORMAT_VERSION, type MancalaProject, type ProjectObject } from './projectTypes'
+import type { ScenarioTrack } from '../scenario/scenarioTypes'
+import {
+  PROJECT_FORMAT_VERSION,
+  type MancalaProject,
+  type ProjectObject,
+  type ProjectScenarioState,
+} from './projectTypes'
 
 export type OpenProjectResult =
   | { ok: true; project: MancalaProject; assetFiles: File[] }
@@ -214,4 +220,69 @@ export function resolveProjectBindings(
     else if (live.length > 1) resolved[boneName] = live
   }
   return resolved
+}
+
+/**
+ * Remap scenario spine row ids from saved project object ids to live row ids after load.
+ * Drops tracks / lane entries that no longer match a spine in the scene.
+ */
+export function remapScenarioStateFromProject(
+  saved: ProjectScenarioState | undefined,
+  projectIdToRowId: Map<string, string>,
+  spineRowIdsInOrder: string[],
+): ProjectScenarioState {
+  const spineRowIds = new Set(spineRowIdsInOrder)
+  const defaults: ProjectScenarioState = {
+    scenarioMode: false,
+    tracks: [],
+    markers: [],
+    laneOrder: [],
+    loop: false,
+    fps: 30,
+    compositionTimeSec: 0,
+  }
+  if (!saved) return defaults
+
+  const mapId = (id: string): string | null => {
+    const live = projectIdToRowId.get(id) ?? id
+    return spineRowIds.has(live) ? live : null
+  }
+
+  const tracks: ScenarioTrack[] = []
+  for (const t of saved.tracks ?? []) {
+    const spineRowId = mapId(t.spineRowId)
+    if (!spineRowId) continue
+    tracks.push({
+      spineRowId,
+      clips: (t.clips ?? []).map((c) => ({ ...c })),
+    })
+  }
+
+  let laneOrder = (saved.laneOrder ?? []).map((id) => mapId(id)).filter((id): id is string => id != null)
+
+  const seen = new Set(laneOrder)
+  for (const id of spineRowIdsInOrder) {
+    if (!seen.has(id)) {
+      laneOrder.push(id)
+      seen.add(id)
+    }
+  }
+  if (laneOrder.length === 0) laneOrder = [...spineRowIdsInOrder]
+
+  const fpsRaw = saved.fps
+  const fps =
+    typeof fpsRaw === 'number' && Number.isFinite(fpsRaw) ? Math.min(120, Math.max(1, fpsRaw)) : 30
+  const compRaw = saved.compositionTimeSec
+  const compositionTimeSec =
+    typeof compRaw === 'number' && Number.isFinite(compRaw) ? Math.max(0, compRaw) : 0
+
+  return {
+    scenarioMode: saved.scenarioMode ?? false,
+    tracks,
+    markers: (saved.markers ?? []).map((m) => ({ ...m })),
+    laneOrder,
+    loop: saved.loop ?? false,
+    fps,
+    compositionTimeSec,
+  }
 }

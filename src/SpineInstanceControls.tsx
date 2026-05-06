@@ -40,6 +40,11 @@ function parseInspectorWorldCoord(raw: string): number | null {
   return n
 }
 
+/** Pixi `destroy()` can leave the instance in a state where `scale` is null — skip imperative updates. */
+function spineIsLive(spine: Spine): boolean {
+  return !spine.destroyed && spine.scale != null && typeof spine.scale.set === 'function'
+}
+
 export type { SkeletonPlaceholderInfo }
 
 export type SpineControlRow = {
@@ -265,7 +270,7 @@ function useInspectorBoneOffset(
     let frameId = 0
     let cancelled = false
     const loop = () => {
-      if (cancelled) return
+      if (cancelled || !spineIsLive(spine)) return
       const pos = viewportStageRef.current?.getSpineBoneLocalOffset(spine)
       if (pos) {
         const xs = pos.x.toFixed(1)
@@ -306,7 +311,7 @@ function useInspectorWorldPositionPx(
     let frameId = 0
     let cancelled = false
     const loop = () => {
-      if (cancelled) return
+      if (cancelled || !spineIsLive(spine)) return
       const pos = viewportStageRef.current?.getSpineWorldPosition(spine)
       if (pos) {
         const xs = pos.x.toFixed(1)
@@ -371,6 +376,11 @@ export const SpineInstanceControls = forwardRef<
      * Receives the list of animation names to add to Common Animation States.
      */
     onAddToCommonAnimations?: (names: string[]) => void
+    /**
+     * When true, animation transport (play / pause / loop / scrub / speed) is disabled so the
+     * Scenario composition clock can drive poses without fighting the inspector.
+     */
+    scenarioLocksInspectorTransport?: boolean
   }
 >(function SpineInstanceControls(
   {
@@ -389,30 +399,30 @@ export const SpineInstanceControls = forwardRef<
     onRootDisplayScaleChange,
     onIgnorePlaceholderPolicy,
     onAddToCommonAnimations,
+    scenarioLocksInspectorTransport = false,
   },
   ref,
 ) {
   /** Shown on inspector labels so the active layout target (viewport dropdown) is obvious. */
   const layoutBracket = `(${placeholderLayoutTarget.toUpperCase()})`
 
-  const names = useMemo(
-    () => row.spine.skeleton.data.animations.map((a) => a.name),
-    [row.spine],
-  )
+  const names = useMemo(() => {
+    if (!spineIsLive(row.spine)) return []
+    return row.spine.skeleton.data.animations.map((a) => a.name)
+  }, [row.spine])
 
-  const skinEntries = useMemo(
-    () =>
-      row.spine.skeleton.data.skins.map((s, i) => ({
-        index: i,
-        label: s.name || '(unnamed)',
-      })),
-    [row.spine],
-  )
+  const skinEntries = useMemo(() => {
+    if (!spineIsLive(row.spine)) return []
+    return row.spine.skeleton.data.skins.map((s, i) => ({
+      index: i,
+      label: s.name || '(unnamed)',
+    }))
+  }, [row.spine])
 
-  const slotNames = useMemo(
-    () => row.spine.skeleton.slots.map((s) => s.data.name),
-    [row.spine],
-  )
+  const slotNames = useMemo(() => {
+    if (!spineIsLive(row.spine)) return []
+    return row.spine.skeleton.slots.map((s) => s.data.name)
+  }, [row.spine])
 
   const savedSlotAttachments = useRef(new Map<string, Attachment | null>())
   const [hiddenSlots, setHiddenSlots] = useState<Set<string>>(() => new Set())
@@ -421,9 +431,12 @@ export const SpineInstanceControls = forwardRef<
   const [loop, setLoop] = useState(true)
   const [speed, setSpeed] = useState(1)
   const [playing, setPlaying] = useState(false)
-  const [sceneScale, setSceneScale] = useState(() => row.spine.scale.x)
+  const [sceneScale, setSceneScale] = useState(() =>
+    spineIsLive(row.spine) ? row.spine.scale.x : 1,
+  )
   const [scaleEdit, setScaleEdit] = useState<string | null>(null)
   const displayScaleForLayout = useMemo(() => {
+    if (!spineIsLive(row.spine)) return 1
     if (row.pinnedUnder) return row.spine.scale.x
     const c = row.canonicalScale ?? row.spine.scale.x
     if (placeholderLayoutTarget === 'main') return c
@@ -432,7 +445,8 @@ export const SpineInstanceControls = forwardRef<
     return row.layoutTbScale ?? c
   }, [
     row.pinnedUnder,
-    row.spine.scale.x,
+    row.spine,
+    spineIsLive(row.spine) ? row.spine.scale.x : 0,
     row.canonicalScale,
     row.layoutPtScale,
     row.layoutLsScale,
@@ -440,11 +454,12 @@ export const SpineInstanceControls = forwardRef<
     placeholderLayoutTarget,
   ])
   useEffect(() => {
-    if (scaleEdit !== null) return
-    setSceneScale(displayScaleForLayout)
-  }, [displayScaleForLayout, scaleEdit])
+    if (scaleEdit !== null || !spineIsLive(row.spine)) return
+    setSceneScale((prev) => (Object.is(prev, displayScaleForLayout) ? prev : displayScaleForLayout))
+  }, [displayScaleForLayout, scaleEdit, row.spine])
   const [scrubTime, setScrubTime] = useState(0)
   const [skinSelect, setSkinSelect] = useState(() => {
+    if (!spineIsLive(row.spine)) return ''
     const sk = row.spine.skeleton.skin
     if (!sk) return ''
     const i = row.spine.skeleton.data.skins.findIndex(
@@ -467,11 +482,12 @@ export const SpineInstanceControls = forwardRef<
     setHiddenSlots(new Set())
   }, [row.id])
 
-  const trackEntry = row.spine.state.tracks[0]
+  const trackEntry = spineIsLive(row.spine) ? row.spine.state.tracks[0] : undefined
   const trackDuration = trackEntry?.animation?.duration ?? 0
 
   useLayoutEffect(() => {
     const spine = row.spine
+    if (!spineIsLive(spine)) return
     if (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored) {
       spine.autoUpdate = false
       spine.state.timeScale = 0
@@ -518,11 +534,12 @@ export const SpineInstanceControls = forwardRef<
   }, [row.id, row.spine, names, row.placeholderPolicyFrozen, row.placeholderPolicyIgnored])
 
   useEffect(() => {
-    if (!playing) return
+    if (!playing || !spineIsLive(row.spine)) return
     row.spine.state.timeScale = speed
   }, [speed, playing, row.spine])
 
   useEffect(() => {
+    if (!spineIsLive(row.spine)) return
     row.spine.scale.set(sceneScale)
   }, [sceneScale, row.spine])
 
@@ -534,6 +551,7 @@ export const SpineInstanceControls = forwardRef<
     if (!inspectorActive || !playing || names.length === 0) return
     let id = 0
     const tick = () => {
+      if (!spineIsLive(row.spine)) return
       const te = row.spine.state.tracks[0]
       if (te) setScrubTime(te.trackTime)
       id = requestAnimationFrame(tick)
@@ -544,13 +562,13 @@ export const SpineInstanceControls = forwardRef<
 
   /** When opening the inspector for a skeleton that is already playing, sync the scrub once. */
   useEffect(() => {
-    if (!inspectorActive || !playing || names.length === 0) return
+    if (!inspectorActive || !playing || names.length === 0 || !spineIsLive(row.spine)) return
     const te = row.spine.state.tracks[0]
     if (te) setScrubTime(te.trackTime)
   }, [inspectorActive, playing, names.length, row.spine])
 
   useEffect(() => {
-    if (playing || names.length === 0) return
+    if (playing || names.length === 0 || !spineIsLive(row.spine)) return
     const te = row.spine.state.tracks[0]
     if (te) setScrubTime(te.trackTime)
   }, [playing, names.length, row.spine, anim, loop])
@@ -603,8 +621,11 @@ export const SpineInstanceControls = forwardRef<
       if (names.length === 0 || (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored)) return noopHandle
 
       const spine = row.spine
+      if (!spineIsLive(spine)) return noopHandle
+
       return {
         prepareSyncStart() {
+          if (!spineIsLive(spine)) return
           const name =
             animRef.current ||
             pickIdleAnimationName(names) ||
@@ -619,15 +640,18 @@ export const SpineInstanceControls = forwardRef<
           setPlaying(false)
         },
         beginPlayback() {
+          if (!spineIsLive(spine)) return
           spine.autoUpdate = true
           spine.state.timeScale = speedRef.current
           setPlaying(true)
         },
         pausePlayback() {
+          if (!spineIsLive(spine)) return
           spine.autoUpdate = false
           setPlaying(false)
         },
         rewindKeepTransport() {
+          if (!spineIsLive(spine)) return
           const name =
             animRef.current ||
             pickIdleAnimationName(names) ||
@@ -709,7 +733,7 @@ export const SpineInstanceControls = forwardRef<
   }, [loop, names, row.spine, speed])
 
   const pause = useCallback(() => {
-    row.spine.autoUpdate = false
+    if (spineIsLive(row.spine)) row.spine.autoUpdate = false
     setPlaying(false)
   }, [row.spine])
 
@@ -916,7 +940,8 @@ export const SpineInstanceControls = forwardRef<
     )
   }, [allRows, onPlaceholderBind, row, placeholderLayoutTarget])
 
-  const transportLocked = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
+  const transportLocked =
+    scenarioLocksInspectorTransport || (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored)
   const scaleInspectorDisabled = row.locked || transportLocked
 
   const isPinned = Boolean(row.pinnedUnder)
@@ -1037,7 +1062,7 @@ export const SpineInstanceControls = forwardRef<
     (newVal, _companion) => {
       const clamped = snapSpineDisplayScale(newVal)
       setSceneScale(clamped)
-      row.spine.scale.set(clamped, clamped)
+      if (spineIsLive(row.spine)) row.spine.scale.set(clamped, clamped)
       if (!row.pinnedUnder) onRootDisplayScaleChange?.(row.id, clamped)
     },
     undefined,
@@ -1056,7 +1081,7 @@ export const SpineInstanceControls = forwardRef<
     if (v !== null) {
       const clamped = Math.max(0.01, snapSpineDisplayScale(v))
       setSceneScale(clamped)
-      row.spine.scale.set(clamped, clamped)
+      if (spineIsLive(row.spine)) row.spine.scale.set(clamped, clamped)
       if (!row.pinnedUnder) onRootDisplayScaleChange?.(row.id, clamped)
     }
     setScaleEdit(null)

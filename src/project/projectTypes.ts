@@ -1,3 +1,5 @@
+import type { ScenarioMarker, ScenarioTrack } from '../scenario/scenarioTypes'
+
 /** Current .mancala project file format version. Increment when breaking changes are made. */
 export const PROJECT_FORMAT_VERSION = 1
 
@@ -118,6 +120,19 @@ export type ProjectViewport = {
   placeholderLayoutTarget?: string
 }
 
+/** Scenario / composition timeline persisted in project.json (optional in older files). */
+export type ProjectScenarioState = {
+  /** Whether Scenario mode was active when the project was saved. */
+  scenarioMode?: boolean
+  tracks: ScenarioTrack[]
+  markers: ScenarioMarker[]
+  /** Spine row ids only; order matches timeline lanes (front to back same convention as layer UI). */
+  laneOrder: string[]
+  loop?: boolean
+  fps?: number
+  compositionTimeSec?: number
+}
+
 /** Root structure of project.json inside the .mancala ZIP. */
 export type MancalaProject = {
   version: typeof PROJECT_FORMAT_VERSION
@@ -134,4 +149,6 @@ export type MancalaProject = {
    * When absent (older files), falls back to the order of `objects`.
    */
   layerOrder: string[]
+  /** Composition timeline; absent in older saves. */
+  scenario?: ProjectScenarioState
 }

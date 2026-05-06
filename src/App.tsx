@@ -8,6 +8,7 @@ import {
   useState,
   type DragEvent,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   PixiStage,
   type PixiStageHandle,
@@ -43,9 +44,25 @@ import {
   type UnknownAnimEntry,
 } from './UnknownAnimationsPromptModal'
 import { saveProjectSaveAs, saveProjectToHandle, isMancalaFile } from './project/saveProject'
-import { pickMancalaFile, readMancalaFile, applyProjectStateToRows, resolveProjectBindings } from './project/openProject'
+import {
+  pickMancalaFile,
+  readMancalaFile,
+  applyProjectStateToRows,
+  resolveProjectBindings,
+  remapScenarioStateFromProject,
+} from './project/openProject'
 import { HelpModal } from './HelpModal'
 import { ValidationPanel } from './ValidationPanel'
+import { ScenarioTimelinePanel } from './scenario/ScenarioTimelinePanel'
+import { applyScenarioAtCompositionTime } from './scenario/applyScenarioAtCompositionTime'
+import {
+  computeScenarioDurationSec,
+  computeScenarioSoloPinnedChildIds,
+  orderTracksLikeLayerOrder,
+  seedScenarioTracksFromScene,
+} from './scenario/scenarioModel'
+import type { ScenarioMarker, ScenarioTrack } from './scenario/scenarioTypes'
+import { newScenarioMarkerId } from './scenario/scenarioTypes'
 import type { Spine } from '@esotericsoftware/spine-pixi-v8'
 import {
   applySceneSnapshot,
@@ -671,6 +688,74 @@ function App() {
   const [isolateAnimSpeed, setIsolateAnimSpeed] = useState<Record<string, number>>({})
   /** Title-bar play toggle for normal (non-isolate) mode. */
   const [scenePlaying, setScenePlaying] = useState(false)
+
+  const [consoleTab, setConsoleTab] = useState<'validation' | 'scenario'>('validation')
+  const [scenarioMode, setScenarioMode] = useState(false)
+  const [scenarioTracks, setScenarioTracks] = useState<ScenarioTrack[]>([])
+  const [scenarioCompTime, setScenarioCompTime] = useState(0)
+  const [scenarioTransportPlaying, setScenarioTransportPlaying] = useState(false)
+  const [scenarioLoop, setScenarioLoop] = useState(false)
+  const [scenarioFps, setScenarioFps] = useState(30)
+  const [scenarioMarkers, setScenarioMarkers] = useState<ScenarioMarker[]>([])
+  const scenarioGapHiddenRef = useRef(new Set<string>())
+  /** Serialized solo pinned set — triggers placeholder reconcile when it changes. */
+  const lastScenarioSoloKeyRef = useRef('\u0000')
+  const scenarioModeRef = useRef(false)
+  const scenarioLoopRef = useRef(false)
+  const scenarioTimeRef = useRef(0)
+  const scenarioDurationRef = useRef(1)
+  const scenarioTracksRef = useRef<ScenarioTrack[]>([])
+  /** Scenario timeline lane order (spine row ids) — independent of hierarchy `layerOrder`. */
+  const [scenarioLaneOrder, setScenarioLaneOrder] = useState<string[]>([])
+  const scenarioLaneOrderRef = useRef<string[]>([])
+  const scenarioTransportPlayingRef = useRef(false)
+  /** When exiting Scenario, restore the layout tab the user had before entering. */
+  const scenarioLayoutBackupRef = useRef<PlaceholderLayoutKey | null>(null)
+
+  const scenarioDuration = useMemo(
+    () => computeScenarioDurationSec(scenarioTracks),
+    [scenarioTracks],
+  )
+  useEffect(() => {
+    scenarioDurationRef.current = Math.max(0.001, scenarioDuration)
+  }, [scenarioDuration])
+
+  useEffect(() => {
+    if (scenarioMode) return
+    const b = scenarioLayoutBackupRef.current
+    if (b === null) return
+    scenarioLayoutBackupRef.current = null
+    setPlaceholderLayoutTarget(b)
+  }, [scenarioMode])
+
+  useEffect(() => {
+    if (!scenarioMode) return
+    const dur = computeScenarioDurationSec(scenarioTracks)
+    if (!(dur > 0)) return
+    setScenarioCompTime((t) => (t > dur ? dur : t))
+    scenarioTimeRef.current = Math.min(scenarioTimeRef.current, dur)
+  }, [scenarioMode, scenarioTracks])
+
+  useEffect(() => {
+    scenarioLaneOrderRef.current = scenarioLaneOrder
+  }, [scenarioLaneOrder])
+
+  useLayoutEffect(() => {
+    scenarioTracksRef.current = scenarioTracks
+    scenarioModeRef.current = scenarioMode
+    scenarioLoopRef.current = scenarioLoop
+    scenarioTransportPlayingRef.current = scenarioTransportPlaying
+    if (!scenarioTransportPlaying) {
+      scenarioTimeRef.current = scenarioCompTime
+    }
+  }, [
+    scenarioTracks,
+    scenarioMode,
+    scenarioLoop,
+    scenarioTransportPlaying,
+    scenarioCompTime,
+  ])
+
   const isolateAnimSpeedRef = useRef(isolateAnimSpeed)
   useEffect(() => {
     isolateAnimSpeedRef.current = isolateAnimSpeed
@@ -753,13 +838,118 @@ function App() {
     setHistoryTick((t) => t + 1)
   }, [])
 
-  useEffect(() => {
-    for (const row of spineRows) {
-      row.spine.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
+  /** Imperative scenario pose + spine visibility (refs) — safe to call from the scenario RAF loop. */
+  const syncScenarioSpineWorld = useCallback((t: number) => {
+    if (!scenarioModeRef.current) return
+    const rows = spineRowsRef.current
+    const tracks = scenarioTracksRef.current
+    const layout = placeholderLayoutTargetRef.current
+    applyScenarioAtCompositionTime(tracks, rows, t, scenarioGapHiddenRef.current)
+    for (const row of rows) {
+      let vis = effectiveLayerVisible(row, layout)
+      if (scenarioGapHiddenRef.current.has(row.id)) vis = false
+      row.spine.visible = vis
       const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
       row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
     }
-  }, [spineRows, placeholderLayoutTarget])
+
+    const stage = stageRef.current
+    if (!stage) return
+    const want = computeScenarioSoloPinnedChildIds(rows, scenarioGapHiddenRef.current)
+    const key = [...want].sort().join(',')
+    if (key === lastScenarioSoloKeyRef.current) return
+    lastScenarioSoloKeyRef.current = key
+    const rowsPayload = rows.map((r) => ({
+      id: r.id,
+      spine: r.spine,
+      placeholderBindings: r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored ? {} : r.placeholderBindings,
+    }))
+    stage.reconcilePlaceholderAttachments(
+      rowsPayload,
+      layout,
+      want.size > 0 ? { scenarioSoloChildIds: want } : undefined,
+    )
+  }, [])
+
+  const seekScenarioMarker = useCallback(
+    (t: number) => {
+      if (scenarioTransportPlayingRef.current) {
+        setScenarioCompTime(scenarioTimeRef.current)
+      }
+      setScenarioTransportPlaying(false)
+      const dur = computeScenarioDurationSec(scenarioTracksRef.current, 0)
+      const maxT = dur > 0 ? dur : Number.POSITIVE_INFINITY
+      const clamped = Math.min(Math.max(0, t), maxT)
+      scenarioTimeRef.current = clamped
+      setScenarioCompTime(clamped)
+      syncScenarioSpineWorld(clamped)
+    },
+    [syncScenarioSpineWorld],
+  )
+
+  const addScenarioMarker = useCallback(
+    (label: string, timeSec: number) => {
+      const name = label.trim()
+      if (!name) return
+      pushUndoSnapshot()
+      setScenarioMarkers((prev) =>
+        [...prev, { id: newScenarioMarkerId(), timeSec, label: name }].sort((a, b) => a.timeSec - b.timeSec),
+      )
+    },
+    [pushUndoSnapshot],
+  )
+
+  const removeScenarioMarker = useCallback(
+    (id: string) => {
+      pushUndoSnapshot()
+      setScenarioMarkers((prev) => prev.filter((m) => m.id !== id))
+    },
+    [pushUndoSnapshot],
+  )
+
+  const beginScenarioMarkerDragUndo = useCallback(() => {
+    pushUndoSnapshot()
+  }, [pushUndoSnapshot])
+
+  const setScenarioMarkerTime = useCallback((id: string, timeSec: number) => {
+    const dur = computeScenarioDurationSec(scenarioTracksRef.current, 0)
+    const maxT = dur > 0 ? dur : Number.POSITIVE_INFINITY
+    const clamped = Math.min(Math.max(0, timeSec), maxT)
+    setScenarioMarkers((prev) =>
+      [...prev.map((m) => (m.id === id ? { ...m, timeSec: clamped } : m))].sort((a, b) => a.timeSec - b.timeSec),
+    )
+  }, [])
+
+  useEffect(() => {
+    if (!scenarioMode) {
+      lastScenarioSoloKeyRef.current = '\u0000'
+      scenarioGapHiddenRef.current.clear()
+      stageRef.current?.reconcilePlaceholderAttachments(
+        spineRows.map((r) => ({
+          id: r.id,
+          spine: r.spine,
+          placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
+        })),
+        placeholderLayoutTarget,
+      )
+      for (const row of spineRows) {
+        row.spine.visible = effectiveLayerVisible(row, placeholderLayoutTarget)
+        const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
+        row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
+      }
+      return
+    }
+    if (scenarioTransportPlayingRef.current) return
+    syncScenarioSpineWorld(scenarioCompTime)
+  }, [
+    spineRows,
+    placeholderLayoutTarget,
+    scenarioMode,
+    scenarioTracks,
+    scenarioCompTime,
+    scenarioTransportPlaying,
+    syncScenarioSpineWorld,
+  ])
 
   useEffect(() => {
     for (const row of spriteRows) {
@@ -1047,6 +1237,25 @@ function App() {
     })
   }, [pushUndoSnapshot])
 
+  const moveScenarioLaneBeforeTarget = useCallback((sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return
+    pushUndoSnapshot()
+    const order = scenarioLaneOrderRef.current
+    const from = order.indexOf(sourceId)
+    const to = order.indexOf(targetId)
+    if (from < 0 || to < 0) return
+    const next = [...order]
+    const [item] = next.splice(from, 1)
+    let insertAt = to
+    if (from < to) insertAt = to - 1
+    next.splice(insertAt, 0, item)
+    setScenarioLaneOrder(next)
+    setScenarioTracks((prev) => {
+      const spineIds = new Set(spineRowsRef.current.map((r) => r.id))
+      return orderTracksLikeLayerOrder(prev, next, spineIds)
+    })
+  }, [pushUndoSnapshot])
+
   const onHierarchyDragStart = useCallback((e: DragEvent<HTMLButtonElement>, id: string) => {
     setHierarchyDragId(id)
     e.dataTransfer.setData('text/plain', id)
@@ -1196,32 +1405,178 @@ function App() {
       startIsolatePlayback()
       return
     }
+    if (scenarioMode) {
+      if (spineRows.length === 0) return
+      syncScenarioSpineWorld(scenarioTimeRef.current)
+      setScenarioTransportPlaying(true)
+      return
+    }
     playAll()
-  }, [isolateMode, isolateSpineOrder.length, playAll, startIsolatePlayback])
+  }, [
+    isolateMode,
+    isolateSpineOrder.length,
+    playAll,
+    startIsolatePlayback,
+    scenarioMode,
+    spineRows.length,
+    syncScenarioSpineWorld,
+  ])
 
   const transportPause = useCallback(() => {
     if (isolateMode) {
       stopIsolatePlayback()
       return
     }
+    if (scenarioMode) {
+      setScenarioCompTime(scenarioTimeRef.current)
+      setScenarioTransportPlaying(false)
+      return
+    }
     pauseAll()
-  }, [isolateMode, pauseAll, stopIsolatePlayback])
+  }, [isolateMode, pauseAll, stopIsolatePlayback, scenarioMode])
 
   const transportRestart = useCallback(() => {
     if (isolateMode) {
       resetIsolateAnimations()
       return
     }
+    if (scenarioMode) {
+      setScenarioCompTime(0)
+      scenarioTimeRef.current = 0
+      return
+    }
     restartAll()
-  }, [isolateMode, resetIsolateAnimations, restartAll])
+  }, [isolateMode, resetIsolateAnimations, restartAll, scenarioMode])
 
   useEffect(() => {
     if (isolateMode) return
     if (spineRows.length === 0) setScenePlaying(false)
   }, [isolateMode, spineRows.length])
 
+  useEffect(() => {
+    if (scenarioMode) setScenePlaying(false)
+  }, [scenarioMode])
+
+  useEffect(() => {
+    if (spineRows.length > 0 || !scenarioMode) return
+    setScenarioMode(false)
+    setScenarioTransportPlaying(false)
+    scenarioGapHiddenRef.current.clear()
+    setScenarioLaneOrder([])
+    setScenarioMarkers([])
+    setScenarioTracks([])
+    setConsoleTab('validation')
+  }, [spineRows.length, scenarioMode])
+
+  useEffect(() => {
+    if (!scenarioMode || !scenarioTransportPlaying) return
+    let frameId = 0
+    let last = performance.now()
+    let lastUiMs = performance.now()
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000
+      last = now
+      let t = scenarioTimeRef.current + dt
+      const dur = scenarioDurationRef.current
+      let scheduleNext = true
+      if (t >= dur) {
+        if (scenarioLoopRef.current) {
+          t = t % dur
+        } else {
+          t = dur
+          scenarioTimeRef.current = t
+          syncScenarioSpineWorld(t)
+          setScenarioCompTime(t)
+          setScenarioTransportPlaying(false)
+          scheduleNext = false
+        }
+      }
+      if (scheduleNext) {
+        scenarioTimeRef.current = t
+        syncScenarioSpineWorld(t)
+        if (now - lastUiMs >= 50) {
+          lastUiMs = now
+          setScenarioCompTime(t)
+        }
+        frameId = requestAnimationFrame(tick)
+      }
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [scenarioMode, scenarioTransportPlaying, syncScenarioSpineWorld])
+
+  const enableScenarioMode = useCallback(() => {
+    pauseAll()
+    setScenarioTransportPlaying(false)
+    setScenarioCompTime(0)
+    scenarioTimeRef.current = 0
+    scenarioLayoutBackupRef.current = placeholderLayoutTargetRef.current
+    setPlaceholderLayoutTarget('main')
+    setScenarioMode(true)
+    setConsoleTab('scenario')
+    const spineIds = new Set(spineRowsRef.current.map((r) => r.id))
+    let lo = layerOrderRef.current.filter((id) => spineIds.has(id))
+    for (const r of spineRowsRef.current) {
+      if (!lo.includes(r.id)) lo.push(r.id)
+    }
+    setScenarioLaneOrder(lo)
+    setScenarioTracks((cur) => {
+      if (cur.length === 0 && spineRowsRef.current.length > 0) {
+        return seedScenarioTracksFromScene(lo, spineRowsRef.current)
+      }
+      return orderTracksLikeLayerOrder(cur, lo, spineIds)
+    })
+  }, [pauseAll])
+
+  const disableScenarioMode = useCallback(() => {
+    setScenarioMode(false)
+    setScenarioTransportPlaying(false)
+    scenarioGapHiddenRef.current.clear()
+    setScenarioLaneOrder([])
+    setScenarioMarkers([])
+    setConsoleTab('validation')
+    pauseAll()
+  }, [pauseAll])
+
+  useEffect(() => {
+    if (!scenarioMode) return
+    const spineIds = new Set(spineRows.map((r) => r.id))
+    setScenarioLaneOrder((prevLo) => {
+      let lo = prevLo.filter((id) => spineIds.has(id))
+      const seen = new Set(lo)
+      for (const r of spineRows) {
+        if (!seen.has(r.id)) {
+          lo.push(r.id)
+          seen.add(r.id)
+        }
+      }
+      setScenarioTracks((prev) => {
+        let next = prev.filter((t) => spineIds.has(t.spineRowId))
+        const have = new Set(next.map((t) => t.spineRowId))
+        for (const id of lo) {
+          if (have.has(id)) continue
+          const row = spineRows.find((r) => r.id === id)
+          if (!row) continue
+          const seeded = seedScenarioTracksFromScene([id], [row])
+          if (seeded[0]) {
+            next.push(seeded[0])
+            have.add(id)
+          }
+        }
+        return orderTracksLikeLayerOrder(next, lo, spineIds)
+      })
+      return lo
+    })
+  }, [scenarioMode, spineRows])
+
   const enterIsolateMode = useCallback(() => {
     if (spineRowsRef.current.length === 0) return
+    if (scenarioModeRef.current) {
+      setScenarioMode(false)
+      setScenarioTransportPlaying(false)
+      scenarioGapHiddenRef.current.clear()
+      setScenarioLaneOrder([])
+    }
     pauseAll()
     const scene = captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current)
     const spinePlayback: Record<string, SpinePlaybackBackup> = {}
@@ -2043,33 +2398,36 @@ function App() {
 
   const clearScene = useCallback(() => {
     importedFilesRef.current = []
-    setAtlasSessionTag(null)
+    const spritesToClear = [...spriteRowsRef.current]
+    // Drop inspector / hierarchy rows from React *before* destroying Pixi spines, so effects
+    // (e.g. SpineInstanceControls syncing scale) do not run against destroyed instances.
+    flushSync(() => {
+      setAtlasSessionTag(null)
+      setOutcome(null)
+      setValidationReport(null)
+      setSpineRows([])
+      setSpriteRows([])
+      setLayerOrder([])
+      setStageScale(1)
+      setCanvasDragSpineId(null)
+      setSelectedSpineId(null)
+      setSelectedSpriteId(null)
+      setPlaceholderLayoutTarget('main')
+      setOpenTitlebarMenu(null)
+      projectFileHandleRef.current = null
+      undoStackRef.current = []
+      redoStackRef.current = []
+      dragHistoryBeforeRef.current = null
+      worldPositionEditBeforeRef.current = null
+      setHistoryTick((t) => t + 1)
+    })
     stageRef.current?.clearSpines()
-    // Destroy sprites — revoke objectUrls
-    const spritesToClear = spriteRowsRef.current
     for (const row of spritesToClear) {
       stageRef.current?.removeSprite(row.sprite, row.objectUrl)
       URL.revokeObjectURL(row.objectUrl)
     }
     stageRef.current?.resetStageView()
     spineHandleById.current.clear()
-    setOutcome(null)
-    setValidationReport(null)
-    setSpineRows([])
-    setSpriteRows([])
-    setLayerOrder([])
-    setStageScale(1)
-    setCanvasDragSpineId(null)
-    setSelectedSpineId(null)
-    setSelectedSpriteId(null)
-    setPlaceholderLayoutTarget('main')
-    setOpenTitlebarMenu(null)
-    projectFileHandleRef.current = null
-    undoStackRef.current = []
-    redoStackRef.current = []
-    dragHistoryBeforeRef.current = null
-    worldPositionEditBeforeRef.current = null
-    setHistoryTick((t) => t + 1)
   }, [])
 
   const resetCanvasView = useCallback(() => {
@@ -2086,14 +2444,39 @@ function App() {
   const [lastSavedTick, setLastSavedTick] = useState(0)
   const isDirty = (spineRows.length > 0 || spriteRows.length > 0) && historyTick !== lastSavedTick
 
-  const buildSaveInput = useCallback(() => ({
-    rows: spineRows,
-    spriteRows,
-    importedFiles: importedFilesRef.current,
-    backdropMode,
-    placeholderLayoutTarget,
-    layerOrder,
-  }), [spineRows, spriteRows, layerOrder, backdropMode, placeholderLayoutTarget])
+  const buildSaveInput = useCallback(
+    () => ({
+      rows: spineRows,
+      spriteRows,
+      importedFiles: importedFilesRef.current,
+      backdropMode,
+      placeholderLayoutTarget,
+      layerOrder,
+      scenario: {
+        scenarioMode,
+        tracks: scenarioTracks,
+        markers: scenarioMarkers,
+        laneOrder: scenarioLaneOrder,
+        loop: scenarioLoop,
+        fps: scenarioFps,
+        compositionTimeSec: scenarioCompTime,
+      },
+    }),
+    [
+      spineRows,
+      spriteRows,
+      layerOrder,
+      backdropMode,
+      placeholderLayoutTarget,
+      scenarioMode,
+      scenarioTracks,
+      scenarioMarkers,
+      scenarioLaneOrder,
+      scenarioLoop,
+      scenarioFps,
+      scenarioCompTime,
+    ],
+  )
 
   const onSaveProject = useCallback(async () => {
     if (spineRows.length === 0 && spriteRows.length === 0) {
@@ -2402,6 +2785,39 @@ function App() {
     })
     setLayerOrder(resolvedLayerOrder)
 
+    // Restore composition scenario (spine ids in file → live row ids via projectIdToRowId)
+    const spineIdsInOrder = newRows.map((r) => r.id)
+    const remapped = remapScenarioStateFromProject(project.scenario, projectIdToRowId, spineIdsInOrder)
+    const spineIds = new Set(spineIdsInOrder)
+    let restoredTracks = remapped.tracks
+    const restoredLaneOrder = remapped.laneOrder
+    const byTrackId = new Map(restoredTracks.map((t) => [t.spineRowId, t]))
+    for (const id of restoredLaneOrder) {
+      if (byTrackId.has(id)) continue
+      const row = newRows.find((r) => r.id === id)
+      if (!row) continue
+      const seeded = seedScenarioTracksFromScene([id], [row])
+      if (seeded[0]) {
+        restoredTracks.push(seeded[0])
+        byTrackId.set(id, seeded[0])
+      }
+    }
+    restoredTracks = orderTracksLikeLayerOrder(restoredTracks, restoredLaneOrder, spineIds)
+
+    setScenarioMarkers(remapped.markers)
+    setScenarioLaneOrder(restoredLaneOrder)
+    setScenarioTracks(restoredTracks)
+    setScenarioLoop(remapped.loop ?? false)
+    setScenarioFps(remapped.fps ?? 30)
+    const restoredComp = remapped.compositionTimeSec ?? 0
+    setScenarioCompTime(restoredComp)
+    scenarioTimeRef.current = restoredComp
+    setScenarioTransportPlaying(false)
+    scenarioGapHiddenRef.current.clear()
+    const restoredScenarioMode = remapped.scenarioMode ?? false
+    setScenarioMode(restoredScenarioMode)
+    setConsoleTab(restoredScenarioMode ? 'scenario' : 'validation')
+
     setBusy(false)
     setProjectBusy(false)
     // Sync the saved-tick so the opened file is not considered dirty
@@ -2672,24 +3088,47 @@ function App() {
           </div>
         </div>
         <div className="editor-titlebar-center">
-          {(spineRows.length > 0 || spriteRows.length > 0 || isolateMode) && (
+          {(spineRows.length > 0 || spriteRows.length > 0 || isolateMode || scenarioMode) && (
             <div
               className="editor-transport"
               role="group"
-              aria-label={isolateMode ? 'Isolate mode transport' : 'Scene transport'}
+              aria-label={
+                isolateMode
+                  ? 'Isolate mode transport'
+                  : scenarioMode
+                    ? 'Scenario composition transport'
+                    : 'Scene transport'
+              }
             >
               <button
                 type="button"
                 className={`transport-btn transport-play${
-                  (isolateMode ? isolatePlaying : scenePlaying) ? ' is-toggled' : ''
+                  (isolateMode
+                    ? isolatePlaying
+                    : scenarioMode
+                      ? scenarioTransportPlaying
+                      : scenePlaying)
+                    ? ' is-toggled'
+                    : ''
                 }`}
                 onClick={transportPlay}
                 disabled={
-                  isolateMode && (isolatePlaying || isolateSpineOrder.length === 0)
+                  (isolateMode && (isolatePlaying || isolateSpineOrder.length === 0)) ||
+                  (scenarioMode && spineRows.length === 0)
                 }
-                title={isolateMode ? 'Play isolate animation queues (parallel)' : 'Play all'}
-                aria-label={isolateMode ? 'Play isolate queues' : 'Play all'}
-                aria-pressed={isolateMode ? isolatePlaying : scenePlaying}
+                title={
+                  isolateMode
+                    ? 'Play isolate animation queues (parallel)'
+                    : scenarioMode
+                      ? 'Play composition'
+                      : 'Play all'
+                }
+                aria-label={
+                  isolateMode ? 'Play isolate queues' : scenarioMode ? 'Play composition' : 'Play all'
+                }
+                aria-pressed={
+                  isolateMode ? isolatePlaying : scenarioMode ? scenarioTransportPlaying : scenePlaying
+                }
               >
                 <span className="transport-icon" aria-hidden="true">
                   ▶
@@ -2702,8 +3141,16 @@ function App() {
                 }`}
                 onClick={transportPause}
                 disabled={isolateMode && !isolatePlaying}
-                title={isolateMode ? 'Stop isolate playback (pause on current frame)' : 'Pause all'}
-                aria-label={isolateMode ? 'Stop isolate playback' : 'Pause all'}
+                title={
+                  isolateMode
+                    ? 'Stop isolate playback (pause on current frame)'
+                    : scenarioMode
+                      ? 'Pause composition'
+                      : 'Pause all'
+                }
+                aria-label={
+                  isolateMode ? 'Stop isolate playback' : scenarioMode ? 'Pause composition' : 'Pause all'
+                }
                 aria-pressed={
                   isolateMode ? (!isolatePlaying && isolateSpineOrder.length > 0) : undefined
                 }
@@ -2714,13 +3161,20 @@ function App() {
                 type="button"
                 className="transport-btn transport-restart"
                 onClick={transportRestart}
-                disabled={isolateMode && isolateSpineOrder.length === 0}
+                disabled={
+                  (isolateMode && isolateSpineOrder.length === 0) ||
+                  (scenarioMode && spineRows.length === 0)
+                }
                 title={
                   isolateMode
                     ? 'Reset isolate queues (first frame of first clip per skeleton)'
-                    : 'Restart all'
+                    : scenarioMode
+                      ? 'Restart composition (time 0)'
+                      : 'Restart all'
                 }
-                aria-label={isolateMode ? 'Reset isolate queues' : 'Restart all'}
+                aria-label={
+                  isolateMode ? 'Reset isolate queues' : scenarioMode ? 'Restart composition' : 'Restart all'
+                }
               >
                 <span className="transport-icon" aria-hidden="true">
                   ↺
@@ -2917,10 +3371,19 @@ function App() {
 
         <main className={`editor-viewport-column${isolateMode ? ' editor-viewport-column--isolate' : ''}`} aria-label="Preview viewport">
           <div className="editor-viewport-chrome">
-            <div className="editor-viewport-tabs" role="tablist">
-              <span className="editor-viewport-tab is-active" role="tab" aria-selected="true">
+            <div className="editor-viewport-tabs" role="tablist" aria-label="Viewport mode">
+              <span
+                className={`editor-viewport-tab${!scenarioMode ? ' is-active' : ''}`}
+                role="tab"
+                aria-selected={!scenarioMode}
+              >
                 Game
               </span>
+              {scenarioMode ? (
+                <span className="editor-viewport-tab is-active" role="tab" aria-selected={true}>
+                  Composition
+                </span>
+              ) : null}
             </div>
             <div className="editor-viewport-toolbar">
               <label className="editor-field-inline">
@@ -2944,6 +3407,12 @@ function App() {
                 <select
                   className="editor-select"
                   value={placeholderLayoutTarget}
+                  disabled={scenarioMode}
+                  title={
+                    scenarioMode
+                      ? 'Layouts are fixed to Main while Scenario is on (independent composition view). Exit Scenario to change layout.'
+                      : undefined
+                  }
                   onChange={(e) =>
                     setPlaceholderLayoutTarget(e.target.value as PlaceholderLayoutKey)
                   }
@@ -2970,10 +3439,19 @@ function App() {
                 type="button"
                 className="btn btn-compact"
                 onClick={enterIsolateMode}
-                disabled={spineRows.length === 0 || isolateMode}
+                disabled={spineRows.length === 0 || isolateMode || scenarioMode}
                 title="Preview skeletons (root or nested) with ordered animation queues"
               >
                 Isolate mode
+              </button>
+              <button
+                type="button"
+                className={`btn btn-compact${scenarioMode ? ' is-active' : ''}`}
+                onClick={() => (scenarioMode ? disableScenarioMode() : enableScenarioMode())}
+                disabled={spineRows.length === 0 || isolateMode}
+                title="Scene-wide composition timeline (global clock, one row per Spine)"
+              >
+                Scenario Mode
               </button>
               <label className="editor-field-inline editor-checkbox">
                 <input
@@ -3028,55 +3506,85 @@ function App() {
               </span>
             </div>
           </div>
-          <div className="editor-viewport-surface">
-            <PixiStage
-              ref={stageRef}
-              backdropMode={backdropMode}
-              showWorldGrid={showWorldGrid}
-              onStageViewChange={setStageScale}
-              viewportLayoutTarget={placeholderLayoutTarget}
-              spineSceneRevision={spineRows.length}
-              atlasPreviewRevision={atlasPreviewRevision}
-              onClearDragPointerTarget={() => { setCanvasDragSpineId(null) }}
-              onSpineCanvasPointerDown={selectSpineFromCanvas}
-              getSpineDragEnabled={getSpineDragEnabled}
-              onSpineDragStart={onSpineDragStartForHistory}
-              onSpineDragEnd={onSpineDragEndForHistory}
-              onSpriteCanvasPointerDown={selectSpriteFromCanvas}
-              getSpriteDragEnabled={getSpriteDragEnabled}
-              onSpriteDragStart={onSpriteDragStartForHistory}
-              onSpriteDragEnd={onSpriteDragEndForHistory}
-            />
+          <div
+            className={`editor-viewport-surface${scenarioMode ? ' editor-viewport-surface--scenario-split' : ''}`}
+          >
+            {scenarioMode ? (
+              <aside className="editor-scenario-game-panel" aria-label="Main game view">
+                <div className="editor-scenario-game-panel-title">Game</div>
+                <p className="editor-scenario-game-panel-copy">
+                  The live renderer is in <strong>Composition</strong> while Scenario is on. Turn Scenario off to
+                  use the full Game canvas here again.
+                </p>
+              </aside>
+            ) : null}
             <div
-              className={
-                placeholderLayoutTarget === 'main'
-                  ? 'editor-viewport-layout-watermark'
-                  : `editor-viewport-layout-watermark editor-viewport-layout-watermark--${placeholderLayoutTarget}`
-              }
-              aria-hidden="true"
+              className={scenarioMode ? 'editor-scenario-composition-stack' : undefined}
+              style={scenarioMode ? undefined : { display: 'contents' }}
             >
-              {VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]}
-            </div>
-            {showMetricsOverlay ? (
-              <ViewportMetricsOverlay
-                stageRef={stageRef}
-                spineRows={spineRows}
-                selectedSpineId={selectedSpineId}
-              />
-            ) : null}
-            <IsolateAnimLabelsOverlay
-              active={isolateMode}
-              isolateSpineOrder={isolateSpineOrder}
-              spineRows={spineRows}
-              isolateAnimLabels={isolateAnimLabels}
-            />
-            {isolateMode ? (
-              <div className="isolate-exit-wrap">
-                <button type="button" className="btn isolate-exit-btn" onClick={exitIsolateMode}>
-                  EXIT ISOLATE MODE
-                </button>
+              {scenarioMode ? (
+                <div className="editor-scenario-composition-heading" role="status">
+                  <span className="editor-scenario-composition-title">Composition preview</span>
+                  <span className="editor-scenario-composition-sub">
+                    Same scene — dedicated panel for timeline-driven playback
+                  </span>
+                </div>
+              ) : null}
+              <div className="editor-viewport-stage-stack">
+                <PixiStage
+                  ref={stageRef}
+                  backdropMode={backdropMode}
+                  showWorldGrid={showWorldGrid}
+                  onStageViewChange={setStageScale}
+                  viewportLayoutTarget={placeholderLayoutTarget}
+                  spineSceneRevision={spineRows.length}
+                  atlasPreviewRevision={atlasPreviewRevision}
+                  onClearDragPointerTarget={() => { setCanvasDragSpineId(null) }}
+                  onSpineCanvasPointerDown={selectSpineFromCanvas}
+                  getSpineDragEnabled={getSpineDragEnabled}
+                  onSpineDragStart={onSpineDragStartForHistory}
+                  onSpineDragEnd={onSpineDragEndForHistory}
+                  onSpriteCanvasPointerDown={selectSpriteFromCanvas}
+                  getSpriteDragEnabled={getSpriteDragEnabled}
+                  onSpriteDragStart={onSpriteDragStartForHistory}
+                  onSpriteDragEnd={onSpriteDragEndForHistory}
+                />
+                <div
+                  className={
+                    placeholderLayoutTarget === 'main'
+                      ? 'editor-viewport-layout-watermark'
+                      : `editor-viewport-layout-watermark editor-viewport-layout-watermark--${placeholderLayoutTarget}`
+                  }
+                  aria-hidden="true"
+                >
+                  {scenarioMode
+                    ? placeholderLayoutTarget === 'main'
+                      ? 'Composition preview'
+                      : `${VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]} · composition`
+                    : VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]}
+                </div>
+                {showMetricsOverlay ? (
+                  <ViewportMetricsOverlay
+                    stageRef={stageRef}
+                    spineRows={spineRows}
+                    selectedSpineId={selectedSpineId}
+                  />
+                ) : null}
+                <IsolateAnimLabelsOverlay
+                  active={isolateMode}
+                  isolateSpineOrder={isolateSpineOrder}
+                  spineRows={spineRows}
+                  isolateAnimLabels={isolateAnimLabels}
+                />
+                {isolateMode ? (
+                  <div className="isolate-exit-wrap">
+                    <button type="button" className="btn isolate-exit-btn" onClick={exitIsolateMode}>
+                      EXIT ISOLATE MODE
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
         </main>
 
@@ -3140,6 +3648,7 @@ function App() {
                       onRootDisplayScaleChange={onRootDisplayScaleChange}
                       onIgnorePlaceholderPolicy={() => ignoreSpinePlaceholderPolicy(row.id)}
                       onAddToCommonAnimations={addToCommonAnimationNames}
+                      scenarioLocksInspectorTransport={scenarioMode}
                     />
                   </div>
                 ))}
@@ -3184,29 +3693,92 @@ function App() {
 
       <section
         className="editor-console"
-        aria-label="Validation and import log"
+        aria-label="Validation, scenario timeline, and import log"
         style={{ height: consoleHeightPx }}
       >
         <header className="editor-console-header">
-          <span className="editor-console-title">Validation</span>
+          <div className="editor-console-tabs" role="tablist" aria-label="Bottom panel">
+            <button
+              type="button"
+              className={`editor-console-tab${consoleTab === 'validation' ? ' is-active' : ''}`}
+              role="tab"
+              aria-selected={consoleTab === 'validation'}
+              onClick={() => setConsoleTab('validation')}
+            >
+              Validation
+            </button>
+            <button
+              type="button"
+              className={`editor-console-tab${consoleTab === 'scenario' ? ' is-active' : ''}`}
+              role="tab"
+              aria-selected={consoleTab === 'scenario'}
+              onClick={() => setConsoleTab('scenario')}
+            >
+              Scenario
+            </button>
+          </div>
         </header>
         <div className="editor-console-body">
-          <ValidationPanel report={validationReport} validating={validating} />
-          {outcome && (
-            <div className="editor-load-log editor-load-log--console" role="status">
-              {outcome.loaded.length > 0 && (
-                <p className="feedback-ok">Loaded: {outcome.loaded.join(', ')}</p>
+          {consoleTab === 'validation' ? (
+            <div className="editor-console-tab-pane editor-console-tab-pane--scroll">
+              <ValidationPanel report={validationReport} validating={validating} />
+              {outcome && (
+                <div className="editor-load-log editor-load-log--console" role="status">
+                  {outcome.loaded.length > 0 && (
+                    <p className="feedback-ok">Loaded: {outcome.loaded.join(', ')}</p>
+                  )}
+                  {outcome.notes.map((n, i) => (
+                    <p key={`n-${i}`} className="feedback-note">
+                      {n}
+                    </p>
+                  ))}
+                  {outcome.errors.map((err, i) => (
+                    <p key={`e-${i}`} className="feedback-err">
+                      {err}
+                    </p>
+                  ))}
+                </div>
               )}
-              {outcome.notes.map((n, i) => (
-                <p key={`n-${i}`} className="feedback-note">
-                  {n}
+            </div>
+          ) : (
+            <div className="editor-console-tab-pane editor-console-tab-pane--scenario">
+              {!scenarioMode && (
+                <p className="feedback-note" role="status">
+                  Turn on <strong>Scenario</strong> in the viewport toolbar to drive the scene with this timeline.
                 </p>
-              ))}
-              {outcome.errors.map((err, i) => (
-                <p key={`e-${i}`} className="feedback-err">
-                  {err}
-                </p>
-              ))}
+              )}
+              <ScenarioTimelinePanel
+                tracks={scenarioTracks}
+                onTracksChange={setScenarioTracks}
+                spineRows={spineRows}
+                scenarioLaneOrder={scenarioLaneOrder}
+                moveScenarioLaneBeforeTarget={moveScenarioLaneBeforeTarget}
+                compositionTime={scenarioCompTime}
+                onCompositionTimeChange={setScenarioCompTime}
+                onUserScrub={() => {
+                  if (scenarioTransportPlayingRef.current) {
+                    setScenarioCompTime(scenarioTimeRef.current)
+                  }
+                  setScenarioTransportPlaying(false)
+                }}
+                transportPlaying={scenarioTransportPlaying}
+                onTransportPlayingChange={(playing) => {
+                  if (!playing) setScenarioCompTime(scenarioTimeRef.current)
+                  else syncScenarioSpineWorld(scenarioTimeRef.current)
+                  setScenarioTransportPlaying(playing)
+                }}
+                loop={scenarioLoop}
+                onLoopChange={setScenarioLoop}
+                fps={scenarioFps}
+                onFpsChange={setScenarioFps}
+                scenarioActive={scenarioMode}
+                markers={scenarioMarkers}
+                onAddMarker={addScenarioMarker}
+                onRemoveMarker={removeScenarioMarker}
+                onMarkerSeek={seekScenarioMarker}
+                onBeginMarkerDragUndo={beginScenarioMarkerDragUndo}
+                onMarkerTimeChange={setScenarioMarkerTime}
+              />
             </div>
           )}
         </div>

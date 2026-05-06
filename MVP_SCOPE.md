@@ -291,6 +291,8 @@ _Add a new row for every user-visible addition or important behavior change._
 
 | Date | Summary | Notes |
 |------|---------|-------|
+| 2026-05-06 | **Scenario timeline UI (AE-style playhead + layout lock)** | **Layouts** dropdown disabled in Scenario; editor forces **Main** for the composition view and restores the previous layout tab on exit. Timeline: removed separate scrub bar; **blue playhead** with draggable triangle + click ruler/lanes to scrub. Clip **▾** menu for animation (fits short blocks). Composition length = latest clip end; playhead/time clamp when clips shorten. **Row 1** (front track) always **blue** clip color; other rows use a fixed rotating palette. |
+| 2026-05-06 | **Scenario composition (v1 slice)** | Separate tool from **Isolate**: viewport **Scenario** toggles a global composition clock; bottom **Scenario** tab shows **horizontal clip blocks** per row (drag left/right; overlap resolved on the same row). **Game vs Composition:** while Scenario is on, the **Game** column is a non-rendering placeholder and the **live Pixi canvas** sits under **Composition preview** only (single WebGL context, not remounted). Title-bar transport drives composition time; inspector Spine transport is locked. No `.mancala` persistence yet. |
 | 2026-05-03 | **v2 studio priority:** layouts first | **Multi-target layouts** are the **primary** v2 delivery focus; other v2 scope (extra asset types, export) follows unless a dependency overrides. |
 | 2026-05-03 | **v2 Roadmap:** multi-target layouts + screenshots + per-target visibility | **main** = PC/desktop reference (unchanged when editing variants); **pt** (9:16), **ls** (16:9), **tb** (ratio TBD) = per-target transforms + **hierarchy visibility** overrides; reuse/add project assets; **active target must be obvious** — **control placement TBD** (design decision §10); **screenshots** per layout for tech-art handoff; **`@1x` / `@2x`** atlas behavior must remain correct in every layout mode. Scene export to carry per-target blocks when implemented. |
 | 2026-05-02 | **v3 Roadmap:** timeline event triggers | **Timeline event triggers (Inspector):** preview-only cross-instance playback driven by Spine timeline events — toggle, event reference list, per-rule mapping (event → target instance → animation + loop), multiple rules and multiple targets; optional `.mancala` persistence; note vs scenarios and scrub caveat. |
@@ -405,3 +407,4 @@ Some rigs fire **timeline events** from Spine (keys on the animation timeline) s
 ### Privacy
 
 - No login, no cloud, no automatic uploads—all processing is in the browser tab.
+my 

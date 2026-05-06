@@ -8,6 +8,7 @@ import {
   PROJECT_FORMAT_VERSION,
   type MancalaProject,
   type ProjectObject,
+  type ProjectScenarioState,
   type SpriteObject,
 } from './projectTypes'
 
@@ -31,6 +32,8 @@ export type SaveProjectInput = {
   placeholderLayoutTarget?: 'main' | 'pt' | 'ls' | 'tb'
   /** Unified draw order: IDs from both rows and spriteRows (front to back). */
   layerOrder?: string[]
+  /** Composition timeline + Scenario mode flag; written into project.json. */
+  scenario?: ProjectScenarioState
 }
 
 export type SaveProjectResult =
@@ -110,6 +113,7 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     backdropMode,
     layerOrder,
     placeholderLayoutTarget = 'main',
+    scenario,
   } = input
   const safeFramePreset = input.safeFramePreset ?? 'off'
   const zip = new JSZip()
@@ -280,6 +284,7 @@ async function buildZip(input: SaveProjectInput): Promise<JSZip> {
     objects,
     sprites,
     layerOrder: resolvedLayerOrder,
+    ...(scenario != null ? { scenario } : {}),
   }
 
   zip.file('project.json', JSON.stringify(project, null, 2))

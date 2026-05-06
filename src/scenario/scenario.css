@@ -1,0 +1,494 @@
+.scenario-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.scenario-panel-hint,
+.scenario-toolbar {
+  flex-shrink: 0;
+}
+
+.scenario-panel-hint {
+  margin: 0;
+  color: var(--text-muted, #9aa0a6);
+  line-height: 1.4;
+}
+
+.scenario-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.scenario-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-frame-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #9aa0a6);
+}
+
+/* --- Clip lanes (AE-style) --- */
+
+.scenario-lanes-root {
+  position: relative;
+  z-index: 0;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  background: var(--bg-deep, #141414);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scenario-lanes-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  cursor: default;
+}
+
+.scenario-lanes-inner {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.scenario-timeline-stack {
+  position: relative;
+  padding-top: 12px;
+}
+
+.scenario-ruler-row {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  background: var(--bg-panel-header, #1a1a1a);
+}
+
+/* Stay under the scrollport top while track rows scroll vertically (below playhead overlay) */
+.scenario-ruler-row--with-playhead {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  min-height: 44px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.scenario-ruler-label-gutter--padded {
+  padding-top: 2px;
+}
+
+.scenario-ruler-label-gutter {
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-subtle, #2a2a2a);
+}
+
+.scenario-ruler-area {
+  flex-shrink: 0;
+  height: 100%;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+}
+
+.scenario-ruler-area--padded {
+  min-height: 26px;
+}
+
+.scenario-ruler-tick {
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.scenario-ruler-tick-label {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(200, 205, 220, 0.55);
+  white-space: nowrap;
+}
+
+.scenario-marker-form {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.scenario-ruler-marker-wrap {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  z-index: 14;
+  max-width: 120px;
+  padding-top: 12px;
+}
+
+.scenario-ruler-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0 2px 2px;
+  margin: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text, #e8e8e8);
+  cursor: grab;
+  font-size: 9px;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.scenario-ruler-marker:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.scenario-ruler-marker.is-dragging {
+  cursor: grabbing;
+}
+
+.scenario-ruler-marker-flag {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid #d4a017;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.scenario-ruler-marker-label {
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: rgba(230, 210, 150, 0.95);
+}
+
+.scenario-ruler-marker-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 14px;
+  border: none;
+  border-radius: 3px;
+  background: rgba(32, 32, 32, 0.92);
+  color: var(--text-muted, #9aa0a6);
+  cursor: pointer;
+}
+
+.scenario-ruler-marker-remove:hover {
+  background: rgba(140, 45, 45, 0.95);
+  color: #fff;
+}
+
+/* AE-style playhead: triangle + line. --overlay sits on .scenario-lanes-root (not inside overflow:auto) so it is not clipped and stays above the sticky ruler. */
+.scenario-playhead-wrap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  margin-left: -9px;
+  z-index: 25;
+  pointer-events: none;
+}
+
+.scenario-playhead-wrap--overlay {
+  top: 2px;
+  bottom: 2px;
+  z-index: 40;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.scenario-playhead-wrap--overlay:focus-visible {
+  outline: 2px solid rgba(20, 115, 230, 0.85);
+  outline-offset: 2px;
+}
+
+.scenario-playhead-handle {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  width: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 11px solid #1473e6;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.scenario-playhead-wrap--overlay:hover .scenario-playhead-handle {
+  filter: brightness(1.12);
+}
+
+.scenario-playhead-line {
+  position: absolute;
+  top: 11px;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  margin-left: 0;
+  background: #1473e6;
+  box-shadow: 0 0 6px rgba(20, 115, 230, 0.55);
+  pointer-events: none;
+}
+
+.scenario-lane-row {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle, #252525);
+}
+
+.scenario-lane-label {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-right: 1px solid var(--border-subtle, #2a2a2a);
+  background: var(--bg-panel-header, #181818);
+  min-width: 0;
+}
+
+.scenario-lane-label-text {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-lane-label-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.scenario-lane-label-actions button {
+  padding: 0 6px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  color: inherit;
+}
+
+.scenario-lane-label-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.scenario-lane-label .btn {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: inherit;
+}
+
+.scenario-lane-label .btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.scenario-lane-track {
+  flex-shrink: 0;
+  /* Default when no inline style — row styles set grid + tint from scenarioTrackColors */
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.02) 0,
+    rgba(255, 255, 255, 0.02) 1px,
+    transparent 1px,
+    transparent 36px
+  );
+}
+
+.scenario-lane-empty {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  pointer-events: none;
+}
+
+.scenario-lane-track-error {
+  position: absolute;
+  right: 8px;
+  top: 4px;
+  font-size: 11px;
+  color: #f5a623;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.scenario-clip-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  min-width: 10px;
+}
+
+.scenario-clip-block.is-dragging {
+  cursor: grabbing;
+  z-index: 6;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+}
+
+.scenario-clip-block-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+
+.scenario-clip-block-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
+.scenario-clip-block-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  font-size: 16px;
+  border: none;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  cursor: pointer;
+}
+
+.scenario-clip-block-remove:hover {
+  background: rgba(220, 60, 60, 0.85);
+}
+
+/* --- Animation popover (short blocks) --- */
+
+.scenario-anim-menu-root {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.scenario-anim-menu-trigger {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scenario-anim-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.scenario-anim-menu-trigger-chevron {
+  display: block;
+  transform: translateY(-1px);
+}
+
+.scenario-anim-menu-list {
+  min-width: 160px;
+  max-height: min(240px, 40vh);
+  overflow: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 4px;
+  border: 1px solid var(--border, #444);
+  background: var(--bg-panel, #222);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* Portaled to body — must sit above all timeline clip blocks and lane stacking contexts */
+.scenario-anim-menu-list--portal {
+  position: fixed;
+  z-index: 100050;
+  max-width: min(280px, calc(100vw - 16px));
+}
+
+.scenario-anim-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text, #eee);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scenario-anim-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.scenario-anim-menu-item.is-current {
+  background: rgba(20, 115, 230, 0.25);
+  font-weight: 600;
+}

@@ -59,6 +59,11 @@ export type ReconcilePlaceholderOptions = {
    * direct children of the stage world (isolate mode — show only selected skeletons).
    */
   isolateRootChildIds?: Set<string>
+  /**
+   * Pinned children that stay world-rooted while Scenario mode keeps their host in a gap but the
+   * child still has an active clip (independent visibility vs the host).
+   */
+  scenarioSoloChildIds?: Set<string>
 }
 
 export type StagePerformanceSnapshot = {
@@ -958,14 +963,26 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       if (!world) return
       const byId = new Map(rows.map((r) => [r.id, r.spine]))
       const isolate = options?.isolateRootChildIds
-      /** World transform of each isolate-float spine **before** detach (preserve on-screen pose). */
-      const isolateWorldTm = new Map<string, Matrix>()
+      const scenarioSolo = options?.scenarioSoloChildIds
+      const skipFloat = (id: string) =>
+        (isolate?.has(id) ?? false) || (scenarioSolo?.has(id) ?? false)
+      /** World transform of each floated spine **before** detach (preserve on-screen pose). */
+      const floatWorldTm = new Map<string, Matrix>()
       if (isolate) {
         for (const id of isolate) {
           const s = byId.get(id)
           if (!s || s.destroyed) continue
           s.update(0)
-          isolateWorldTm.set(id, s.worldTransform.clone())
+          floatWorldTm.set(id, s.worldTransform.clone())
+        }
+      }
+      if (scenarioSolo) {
+        for (const id of scenarioSolo) {
+          if (floatWorldTm.has(id)) continue
+          const s = byId.get(id)
+          if (!s || s.destroyed) continue
+          s.update(0)
+          floatWorldTm.set(id, s.worldTransform.clone())
         }
       }
 
@@ -988,7 +1005,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         for (const [boneKey, childIds] of Object.entries(bindMap)) {
           const unique = [...new Set(childIds)]
           if (unique.length < 2) continue
-          const nestIds = isolate ? unique.filter((id) => !isolate.has(id)) : unique
+          const nestIds = unique.filter((id) => !skipFloat(id))
           if (nestIds.length < 2) continue
           const spines = nestIds.map((id) => byId.get(id)).filter((s): s is Spine => Boolean(s))
           if (spines.length < 2) continue
@@ -1003,7 +1020,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         // One symbol per bone key, or layout-variant keys (same child, multiple bone names) → one attach each.
         for (const [childId, bones] of childToBones) {
           if (assigned.has(childId)) continue
-          if (isolate?.has(childId)) continue
+          if (skipFloat(childId)) continue
           const existing = bones.filter((b) => !!row.spine.skeleton.findBone(b))
           const bone =
             pickPlaceholderBoneForLayout(existing.length > 0 ? existing : bones, layoutTarget) ??
@@ -1016,11 +1033,10 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         }
       }
 
-      if (isolate && isolateWorldTm.size > 0) {
+      if (floatWorldTm.size > 0) {
         const wInv = new Matrix().copyFrom(world.worldTransform).invert()
-        for (const id of isolate) {
+        for (const [id, cap] of floatWorldTm) {
           const s = byId.get(id)
-          const cap = isolateWorldTm.get(id)
           if (!s || !cap || s.destroyed) continue
           if (s.parent !== world) continue
           const local = wInv.clone().append(cap)
