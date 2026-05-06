@@ -61,6 +61,14 @@ import { ViewportMetricsOverlay } from './ViewportMetricsOverlay'
 import { applyPlaceholderBinding } from './spine/applyPlaceholderBindingState'
 import { effectivePinnedBoneOffset } from './spine/pinnedBoneLayout'
 import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
+import type { AnimationStateListener } from '@esotericsoftware/spine-core'
+import { IsolateModePanel } from './IsolateModePanel'
+import { IsolateAnimLabelsOverlay } from './IsolateAnimLabelsOverlay'
+import {
+  captureSpinePlaybackBackup,
+  restoreSpinePlaybackBackup,
+  type SpinePlaybackBackup,
+} from './isolate/spinePlaybackBackup'
 
 const VIEWPORT_LAYOUT_WATERMARK: Record<PlaceholderLayoutKey, string> = {
   main: 'Main view',
@@ -268,6 +276,20 @@ function IconTrash() {
   )
 }
 
+type IsolateModeBackup = {
+  scene: SceneSnapshot
+  layoutTarget: PlaceholderLayoutKey
+  layerOrder: string[]
+  selectedSpineId: string | null
+  selectedSpriteId: string | null
+  canvasDragSpineId: string | null
+  spinePlayback: Record<string, SpinePlaybackBackup>
+  spriteVisible: Record<string, boolean>
+  backdropMode: StageBackdropMode
+  showWorldGrid: boolean
+  showMetricsOverlay: boolean
+}
+
 function App() {
   const stageRef = useRef<PixiStageHandle>(null)
   const importedFilesRef = useRef<File[]>([])
@@ -336,6 +358,10 @@ function App() {
 
   /** Ordered IDs (front-to-back) for the unified hierarchy and z-order. */
   const [layerOrder, setLayerOrder] = useState<string[]>([])
+  const layerOrderRef = useRef(layerOrder)
+  useEffect(() => {
+    layerOrderRef.current = layerOrder
+  }, [layerOrder])
   /** Selected sprite ID — mutually exclusive with the spine selection. */
   const [selectedSpriteId, setSelectedSpriteId] = useState<string | null>(null)
   const selectedSpriteIdRef = useRef(selectedSpriteId)
@@ -632,6 +658,25 @@ function App() {
   /** Canvas pick highlight (inspector); synced with hierarchy or direct canvas click on a skeleton. */
   const [canvasDragSpineId, setCanvasDragSpineId] = useState<string | null>(null)
 
+  const [isolateMode, setIsolateMode] = useState(false)
+  const [isolateSpineOrder, setIsolateSpineOrder] = useState<string[]>([])
+  const [isolateAnimQueues, setIsolateAnimQueues] = useState<Record<string, string[]>>({})
+  const [isolatePlaying, setIsolatePlaying] = useState(false)
+  const [isolateAnimLabels, setIsolateAnimLabels] = useState<Record<string, string>>({})
+  /** Per isolated skeleton: Spine {@link AnimationState#timeScale} while in isolate mode (1 = normal). */
+  const [isolateAnimSpeed, setIsolateAnimSpeed] = useState<Record<string, number>>({})
+  const isolateAnimSpeedRef = useRef(isolateAnimSpeed)
+  useEffect(() => {
+    isolateAnimSpeedRef.current = isolateAnimSpeed
+  }, [isolateAnimSpeed])
+  const isolateBackupRef = useRef<IsolateModeBackup | null>(null)
+  const pendingIsolateRestoreRef = useRef<IsolateModeBackup | null>(null)
+  const isolateAnimQueuesRef = useRef(isolateAnimQueues)
+  useEffect(() => {
+    isolateAnimQueuesRef.current = isolateAnimQueues
+  }, [isolateAnimQueues])
+  const isolateSeqRef = useRef<Array<{ spine: Spine; listener: AnimationStateListener }>>([])
+
   useEffect(() => {
     if (!canvasDragSpineId) return
     if (!spineRows.some((r) => r.id === canvasDragSpineId)) setCanvasDragSpineId(null)
@@ -682,13 +727,11 @@ function App() {
     return row ? !row.locked && (!row.placeholderPolicyFrozen || row.placeholderPolicyIgnored) : true
   }, [spineRows])
 
-  const getSpriteDragEnabled = useCallback(
-    (sprite: AnySprite) => {
-      const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
-      return row ? !row.locked : true
-    },
-    [],
-  )
+  const getSpriteDragEnabled = useCallback((sprite: AnySprite) => {
+    if (isolateMode) return false
+    const row = spriteRowsRef.current.find((r) => r.sprite === sprite)
+    return row ? !row.locked : true
+  }, [isolateMode])
 
   const dragSpriteBeforeRef = useRef<number>(0)
 
@@ -798,6 +841,23 @@ function App() {
     [spriteRows, selectedSpriteId],
   )
 
+  const isolateEnterUiRef = useRef({
+    selectedSpineId: null as string | null,
+    selectedSpriteId: null as string | null,
+    canvasDragSpineId: null as string | null,
+    backdropMode: 'dark' as StageBackdropMode,
+    showWorldGrid: true,
+    showMetricsOverlay: false,
+  })
+  isolateEnterUiRef.current = {
+    selectedSpineId,
+    selectedSpriteId,
+    canvasDragSpineId,
+    backdropMode,
+    showWorldGrid,
+    showMetricsOverlay,
+  }
+
   // ── 9-slice guide callbacks (stable wrappers referencing refs) ─────────────
   const guideInsetChangeRef = useRef<((newInsets: NineSliceInsets) => void) | null>(null)
   const guideDragStartRef   = useRef<(() => void) | null>(null)
@@ -889,6 +949,14 @@ function App() {
   useLayoutEffect(() => {
     const stage = stageRef.current
     if (!stage) return
+    const isolateRootChildIds =
+      isolateMode
+        ? new Set(
+            isolateSpineOrder.filter((id) =>
+              spineRows.some((r) => r.id === id && r.pinnedUnder != null),
+            ),
+          )
+        : null
     stage.reconcilePlaceholderAttachments(
       spineRows.map((r) => ({
         id: r.id,
@@ -896,7 +964,11 @@ function App() {
         placeholderBindings: (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) ? {} : r.placeholderBindings,
       })),
       placeholderLayoutTarget,
+      isolateRootChildIds && isolateRootChildIds.size > 0
+        ? { isolateRootChildIds }
+        : undefined,
     )
+    if (isolateMode) return
     const mainInits: Array<{ id: string; x: number; y: number }> = []
     for (const row of spineRows) {
       if (!row.pinnedUnder) continue
@@ -935,7 +1007,7 @@ function App() {
         )
       })
     }
-  }, [spineRows, placeholderLayoutTarget])
+  }, [spineRows, placeholderLayoutTarget, isolateMode, isolateSpineOrder])
 
   const onPlaceholderBind = useCallback(
     (
@@ -1024,6 +1096,177 @@ function App() {
       spineHandleById.current.get(row.id)?.rewindKeepTransport()
     }
   }, [spineRows])
+
+  const stopIsolatePlayback = useCallback(() => {
+    for (const { spine, listener } of isolateSeqRef.current) {
+      spine.state.removeListener(listener)
+    }
+    isolateSeqRef.current = []
+    setIsolatePlaying(false)
+  }, [])
+
+  const startIsolatePlayback = useCallback(() => {
+    stopIsolatePlayback()
+    setIsolatePlaying(true)
+    const labels: Record<string, string> = {}
+    for (const id of isolateSpineOrder) {
+      const row = spineRows.find((r) => r.id === id)
+      if (!row) continue
+      const q = isolateAnimQueuesRef.current[id] ?? []
+      if (q.length === 0) {
+        labels[id] = '—'
+        continue
+      }
+      const spine = row.spine
+      spine.state.clearTrack(0)
+      spine.autoUpdate = true
+      spine.state.timeScale = isolateAnimSpeedRef.current[id] ?? 1
+      const progress = { index: 0 }
+      labels[id] = q[0]!
+      spine.state.setAnimation(0, q[0]!, false)
+      const listener: AnimationStateListener = {
+        complete: (entry) => {
+          if (entry.loop) return
+          const queue = isolateAnimQueuesRef.current[id] ?? []
+          progress.index++
+          if (progress.index < queue.length) {
+            const name = queue[progress.index]!
+            spine.state.setAnimation(0, name, false)
+            setIsolateAnimLabels((prev) => ({ ...prev, [id]: name }))
+          } else {
+            const last = queue.length > 0 ? queue[queue.length - 1]! : '—'
+            setIsolateAnimLabels((prev) => ({ ...prev, [id]: last }))
+          }
+        },
+      }
+      spine.state.addListener(listener)
+      isolateSeqRef.current.push({ spine, listener })
+    }
+    setIsolateAnimLabels(labels)
+  }, [isolateSpineOrder, spineRows, stopIsolatePlayback])
+
+  const enterIsolateMode = useCallback(() => {
+    if (spineRowsRef.current.length === 0) return
+    pauseAll()
+    const scene = captureSceneSnapshot(spineRowsRef.current, placeholderLayoutTargetRef.current)
+    const spinePlayback: Record<string, SpinePlaybackBackup> = {}
+    for (const r of spineRowsRef.current) {
+      spinePlayback[r.id] = captureSpinePlaybackBackup(r.spine)
+    }
+    const spriteVisible: Record<string, boolean> = {}
+    for (const r of spriteRowsRef.current) {
+      spriteVisible[r.id] = r.sprite.visible
+    }
+    const ui = isolateEnterUiRef.current
+    isolateBackupRef.current = {
+      scene,
+      layoutTarget: placeholderLayoutTargetRef.current,
+      layerOrder: [...layerOrderRef.current],
+      selectedSpineId: ui.selectedSpineId,
+      selectedSpriteId: ui.selectedSpriteId,
+      canvasDragSpineId: ui.canvasDragSpineId,
+      spinePlayback,
+      spriteVisible,
+      backdropMode: ui.backdropMode,
+      showWorldGrid: ui.showWorldGrid,
+      showMetricsOverlay: ui.showMetricsOverlay,
+    }
+    setIsolateSpineOrder([])
+    setIsolateAnimQueues({})
+    setIsolateAnimLabels({})
+    setIsolateAnimSpeed({})
+    setIsolatePlaying(false)
+    setIsolateMode(true)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => stageRef.current?.resetStageView())
+    })
+  }, [pauseAll])
+
+  const exitIsolateMode = useCallback(() => {
+    stopIsolatePlayback()
+    const b = isolateBackupRef.current
+    isolateBackupRef.current = null
+    if (b) pendingIsolateRestoreRef.current = b
+    setIsolateMode(false)
+    setIsolateAnimLabels({})
+  }, [stopIsolatePlayback])
+
+  useLayoutEffect(() => {
+    if (isolateMode) return
+    const b = pendingIsolateRestoreRef.current
+    if (!b) return
+    pendingIsolateRestoreRef.current = null
+    const next = applySceneSnapshot(spineRowsRef.current, b.scene, b.layoutTarget)
+    for (const r of next) {
+      const pb = b.spinePlayback[r.id]
+      if (pb) restoreSpinePlaybackBackup(r.spine, pb)
+    }
+    for (const r of spriteRowsRef.current) {
+      if (typeof b.spriteVisible[r.id] === 'boolean') {
+        r.sprite.visible = b.spriteVisible[r.id]!
+      }
+    }
+    setLayerOrder(b.layerOrder)
+    setSpineRows(next)
+    setPlaceholderLayoutTarget(b.layoutTarget)
+    setSelectedSpineId(b.selectedSpineId)
+    setSelectedSpriteId(b.selectedSpriteId)
+    setCanvasDragSpineId(b.canvasDragSpineId)
+    setBackdropMode(b.backdropMode)
+    setShowWorldGrid(b.showWorldGrid)
+    setShowMetricsOverlay(b.showMetricsOverlay)
+  }, [isolateMode])
+
+  useEffect(() => {
+    if (!isolateMode) return
+    const show = new Set(isolateSpineOrder)
+    for (const r of spineRows) {
+      r.spine.visible = show.has(r.id)
+      if (show.has(r.id)) {
+        r.spine.state.timeScale = isolateAnimSpeed[r.id] ?? 1
+        if (r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored) {
+          r.spine.autoUpdate = true
+        }
+      }
+    }
+    for (const r of spriteRows) {
+      r.sprite.visible = false
+    }
+  }, [isolateMode, isolateSpineOrder, spineRows, spriteRows, isolateAnimSpeed])
+
+  useEffect(() => {
+    if (!isolateMode) return
+    const spines = isolateSpineOrder
+      .map((id) => spineRows.find((r) => r.id === id)?.spine)
+      .filter((s): s is Spine => Boolean(s))
+    if (spines.length > 0) stageRef.current?.syncHierarchyDrawOrder(spines)
+  }, [isolateMode, isolateSpineOrder, spineRows])
+
+  useEffect(() => {
+    if (!isolateMode) return
+    stopIsolatePlayback()
+  }, [isolateSpineOrder, isolateAnimQueues, isolateMode, stopIsolatePlayback])
+
+  /** Only refit the canvas when the **set** of isolated skeletons changes (add/remove). Reordering draw order must not move the camera. */
+  const isolateFitContentKeyRef = useRef<string>('')
+  useEffect(() => {
+    if (!isolateMode) {
+      isolateFitContentKeyRef.current = ''
+      return
+    }
+    const contentKey = [...isolateSpineOrder].sort().join('\t')
+    if (contentKey === isolateFitContentKeyRef.current) {
+      return
+    }
+    isolateFitContentKeyRef.current = contentKey
+    const id = requestAnimationFrame(() => {
+      const stage = stageRef.current
+      if (!stage) return
+      if (isolateSpineOrder.length === 0) stage.resetStageView()
+      else stage.fitAllSpinesInView()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [isolateMode, isolateSpineOrder])
 
   const runLoad = useCallback(async (files: File[]) => {
     if (files.length === 0) return
@@ -2069,8 +2312,11 @@ function App() {
   }, [loadMancalaFile])
 
   const bodyGridTemplate = useMemo(
-    () => `${sidebarWidthPx}px 6px minmax(200px, 1fr) 6px ${inspectorWidthPx}px`,
-    [sidebarWidthPx, inspectorWidthPx],
+    () =>
+      isolateMode
+        ? 'minmax(240px, 288px) minmax(200px, 1fr)'
+        : `${sidebarWidthPx}px 6px minmax(200px, 1fr) 6px ${inspectorWidthPx}px`,
+    [isolateMode, sidebarWidthPx, inspectorWidthPx],
   )
 
   const onColGutterPointerDown = useCallback(
@@ -2137,7 +2383,7 @@ function App() {
   const canRedo = hasSceneObjects && redoStackRef.current.length > 0
 
   return (
-    <div className="editor-root">
+    <div className={`editor-root${isolateMode ? ' editor-root--isolate' : ''}`}>
       <input
         ref={inputRef}
         type="file"
@@ -2313,7 +2559,7 @@ function App() {
           </div>
         </div>
         <div className="editor-titlebar-center">
-          {(spineRows.length > 0 || spriteRows.length > 0) && (
+          {(spineRows.length > 0 || spriteRows.length > 0) && !isolateMode && (
             <div className="editor-transport" role="group" aria-label="Scene transport">
               <button
                 type="button"
@@ -2357,9 +2603,33 @@ function App() {
         </div>
       </header>
 
-      <div className="editor-workspace">
+      <div className={`editor-workspace${isolateMode ? ' editor-workspace--isolate' : ''}`}>
       <div className="editor-body" style={{ gridTemplateColumns: bodyGridTemplate }}>
-        <aside className="editor-sidebar" aria-label="Hierarchy">
+        {isolateMode ? (
+          <aside className="isolate-sidebar" aria-label="Isolate mode">
+            <IsolateModePanel
+              spineRows={spineRows}
+              isolateSpineOrder={isolateSpineOrder}
+              onIsolateSpineOrderChange={setIsolateSpineOrder}
+              isolateAnimQueues={isolateAnimQueues}
+              onIsolateAnimQueuesChange={setIsolateAnimQueues}
+              isolateAnimSpeed={isolateAnimSpeed}
+              onIsolateAnimSpeedChange={(id, speed) => {
+                setIsolateAnimSpeed((s) => ({ ...s, [id]: speed }))
+              }}
+              onIsolateSpineMetaRemove={(id) => {
+                setIsolateAnimSpeed((s) => {
+                  const { [id]: _, ...rest } = s
+                  return rest
+                })
+              }}
+              isolatePlaying={isolatePlaying}
+              onPlaySequences={startIsolatePlayback}
+              onStopSequences={stopIsolatePlayback}
+            />
+          </aside>
+        ) : (
+          <aside className="editor-sidebar" aria-label="Hierarchy">
           <div className="editor-sidebar-inner">
             {layerOrder.length > 0 ? (
               <div className="editor-panel-section editor-panel-section--hierarchy-grow">
@@ -2499,7 +2769,9 @@ function App() {
             )}
           </div>
         </aside>
+        )}
 
+        {!isolateMode && (
         <div
           className="editor-resize-grip editor-resize-grip--col"
           role="separator"
@@ -2510,8 +2782,9 @@ function App() {
           onPointerUp={onLayoutResizePointerUp}
           onPointerCancel={onLayoutResizePointerUp}
         />
+        )}
 
-        <main className="editor-viewport-column" aria-label="Preview viewport">
+        <main className={`editor-viewport-column${isolateMode ? ' editor-viewport-column--isolate' : ''}`} aria-label="Preview viewport">
           <div className="editor-viewport-chrome">
             <div className="editor-viewport-tabs" role="tablist">
               <span className="editor-viewport-tab is-active" role="tab" aria-selected="true">
@@ -2561,6 +2834,15 @@ function App() {
                 disabled={layerOrder.length === 0}
               >
                 Fit all
+              </button>
+              <button
+                type="button"
+                className="btn btn-compact"
+                onClick={enterIsolateMode}
+                disabled={spineRows.length === 0 || isolateMode}
+                title="Preview skeletons (root or nested) with ordered animation queues"
+              >
+                Isolate mode
               </button>
               <label className="editor-field-inline editor-checkbox">
                 <input
@@ -2651,9 +2933,24 @@ function App() {
                 selectedSpineId={selectedSpineId}
               />
             ) : null}
+            <IsolateAnimLabelsOverlay
+              active={isolateMode}
+              isolateSpineOrder={isolateSpineOrder}
+              spineRows={spineRows}
+              isolateAnimLabels={isolateAnimLabels}
+            />
+            {isolateMode ? (
+              <div className="isolate-exit-wrap">
+                <button type="button" className="btn isolate-exit-btn" onClick={exitIsolateMode}>
+                  EXIT ISOLATE MODE
+                </button>
+              </div>
+            ) : null}
           </div>
         </main>
 
+        {!isolateMode && (
+        <>
         <div
           className="editor-resize-grip editor-resize-grip--col"
           role="separator"
@@ -2737,8 +3034,12 @@ function App() {
             )}
           </div>
         </aside>
+        </>
+        )}
       </div>
 
+      {!isolateMode && (
+      <>
       <div
         className="editor-resize-grip editor-resize-grip--row"
         role="separator"
@@ -2779,6 +3080,9 @@ function App() {
           )}
         </div>
       </section>
+      </>
+      )}
+
       </div>
 
       <footer className="editor-statusbar">

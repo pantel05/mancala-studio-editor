@@ -14,6 +14,7 @@ type Section =
   | 'placeholders'
   | 'animations'
   | 'viewport'
+  | 'isolate'
   | 'project'
   | 'validation'
   | 'shortcuts'
@@ -28,10 +29,11 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'placeholders', label: '⑥ Placeholders' },
   { id: 'animations',   label: '⑦ Animation States' },
   { id: 'viewport',     label: '⑧ Viewport & canvas' },
-  { id: 'project',      label: '⑨ Save & Open project' },
-  { id: 'validation',   label: '⑩ Validation panel' },
-  { id: 'shortcuts',    label: '⑪ Keyboard shortcuts' },
-  { id: 'browser',      label: '⑫ Browser support' },
+  { id: 'isolate',      label: '⑨ Isolate mode' },
+  { id: 'project',      label: '⑩ Save & Open project' },
+  { id: 'validation',   label: '⑪ Validation panel' },
+  { id: 'shortcuts',    label: '⑫ Keyboard shortcuts' },
+  { id: 'browser',      label: '⑬ Browser support' },
 ]
 
 export function HelpModal({ open, onClose }: HelpModalProps) {
@@ -128,6 +130,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <strong>Validate</strong> the scene — the Validation panel shows naming policy errors and animation warnings.
                   </li>
                   <li>
+                    <strong>Isolate mode</strong> (Game view toolbar) — preview chosen skeletons with custom animation playlists; root and nested symbols can be shown on their own without the rest of the scene.
+                  </li>
+                  <li>
                     <strong>Save</strong> the project as a <code>.mancala</code> file via <em>Project → Save</em> or <kbd>⌘S</kbd>.
                     All Spine assets and sprite images are embedded in the file.
                   </li>
@@ -141,6 +146,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <tr><td><strong>Canvas</strong> (centre)</td><td>The live PixiJS renderer — drag objects, zoom, pan, view the world grid.</td></tr>
                     <tr><td><strong>Inspector panel</strong> (right)</td><td>Per-object settings: position, animation/skin/scale for Spine; position/scale/rotation/opacity for sprites.</td></tr>
                     <tr><td><strong>Validation panel</strong> (bottom)</td><td>Real-time errors and warnings for the whole scene.</td></tr>
+                    <tr><td><strong>Isolate sidebar</strong></td><td>Replaces the Hierarchy while <em>Isolate mode</em> is on: add skeletons, build animation queues, control playback and draw order. Static sprites are hidden on the canvas.</td></tr>
                   </tbody>
                 </table>
               </>
@@ -448,6 +454,64 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <p className="help-p">
                   Use the <strong>Layouts</strong> control in the Game view toolbar. <strong>Main</strong> is an open desktop canvas (no fixed device rectangle).
                   <strong>Portrait</strong>, <strong>Landscape</strong>, and <strong>Tablet</strong> overlay a world-space reference frame sized for <strong>1440p / QHD</strong> (9:16 portrait, 16:9 landscape, and a 4:3 tablet rectangle at the same scale) that zooms and pans with your scene so you can check composition. A small watermark in the corner shows the active layout.
+                </p>
+              </>
+            )}
+
+            {active === 'isolate' && (
+              <>
+                <h3 className="help-section-title">Isolate mode</h3>
+                <p className="help-p">
+                  Use <strong>Isolate mode</strong> in the Game view toolbar to focus on one or more Spine skeletons without the full scene.
+                  The canvas starts empty; static <span className="help-badge-inline help-badge-inline--sprite">IMG</span> sprites are hidden until you exit.
+                </p>
+
+                <h3 className="help-section-title">Adding skeletons</h3>
+                <ul className="help-list">
+                  <li>
+                    Open <strong>Add from hierarchy</strong> and pick any loaded skeleton — <strong>root or nested</strong> (symbols under placeholders are listed with a <em>(nested)</em> tag).
+                  </li>
+                  <li>
+                    Nested symbols are shown <strong>alone</strong>: the parent rig is not drawn. The editor temporarily places them on the world root at the same on-screen pose they had while attached.
+                  </li>
+                  <li>
+                    Remove a skeleton from the isolate list with its remove control; draw order and per-object settings for that id are cleared.
+                  </li>
+                </ul>
+
+                <h3 className="help-section-title">Animation queues</h3>
+                <ul className="help-list">
+                  <li>Each added skeleton gets an ordered list of animation clips (defaults to all exported animations).</li>
+                  <li>Add or remove clips from the dropdown; reorder with the ▲ / ▼ buttons or by dragging the <strong>⋮⋮</strong> grip.</li>
+                  <li>
+                    While dragging a clip, the row being moved shows a <strong>blue outline</strong>; the row under the pointer shows a <strong>blue top accent</strong> so you can see the insert position.
+                  </li>
+                  <li>
+                    <strong>Play sequences</strong> runs every skeleton’s queue <strong>in parallel</strong> (track 0, in order, no loop). <strong>Stop</strong> clears listeners and stops playback.
+                  </li>
+                  <li>
+                    <strong>Anim speed</strong> (per skeleton, 0–3×) maps to Spine <code>AnimationState.timeScale</code> for that instance while isolating.
+                  </li>
+                </ul>
+
+                <h3 className="help-section-title">Draw order &amp; canvas</h3>
+                <ul className="help-list">
+                  <li><strong>In front</strong> / <strong>Behind</strong> reorder the isolate list: the first entry draws on top among isolated skeletons.</li>
+                  <li>Drag skeletons on the canvas to reposition them; the view refits when you add or remove skeletons, not when you only change draw order.</li>
+                </ul>
+
+                <h3 className="help-section-title">Captions</h3>
+                <p className="help-p">
+                  During playback, a small label in the <strong>top-left</strong> of the Game view shows each active skeleton as{' '}
+                  <code>display name — current animation</code>, wrapping long names.
+                </p>
+
+                <h3 className="help-section-title">Exiting</h3>
+                <p className="help-p">
+                  Click <strong>EXIT ISOLATE MODE</strong> on the canvas (or close the mode from the UI). The editor restores the previous scene layout, visibility, selection, and Spine playback.
+                </p>
+                <p className="help-p help-note">
+                  Isolate mode is for preview only — it does not change your saved <code>.mancala</code> placeholder bindings or hierarchy.
                 </p>
               </>
             )}

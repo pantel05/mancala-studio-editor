@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Application, Container, Graphics, NineSliceSprite, Point, Sprite } from 'pixi.js'
+import { Application, Container, Graphics, Matrix, NineSliceSprite, Point, Sprite } from 'pixi.js'
 import { Spine } from '@esotericsoftware/spine-pixi-v8'
 import { attachSpineDrag, detachSpineDrag } from './pixi/attachSpineDrag'
 import {
@@ -52,6 +52,14 @@ import type { ValidationIssue } from './spine/validateSpineSelection'
 import { createWebGlDrawCallMeter, type WebGlDrawCallMeter } from './pixi/webglDrawCallMeter'
 
 export type { StageBackdropMode }
+
+export type ReconcilePlaceholderOptions = {
+  /**
+   * Row ids of symbols that are normally nested under placeholder bones but should remain
+   * direct children of the stage world (isolate mode — show only selected skeletons).
+   */
+  isolateRootChildIds?: Set<string>
+}
 
 export type StagePerformanceSnapshot = {
   fps: number
@@ -169,6 +177,7 @@ export type PixiStageHandle = {
   reconcilePlaceholderAttachments(
     rows: PlaceholderReconcileRow[],
     layoutTarget?: PlaceholderLayoutKey,
+    options?: ReconcilePlaceholderOptions,
   ): void
   /** Replace `oldSpine` in the world with `newSpine`, preserving transform and z-order. */
   swapSpineInstance(oldSpine: Spine, newSpine: Spine): void
@@ -178,6 +187,8 @@ export type PixiStageHandle = {
   getSpineWorldPosition(spine: Spine): { x: number; y: number } | null
   /** Map a viewport client position to world coordinates (see cursor readout). */
   clientToWorldXY(clientX: number, clientY: number): { x: number; y: number } | null
+  /** Inverse of {@link clientToWorldXY} for HTML overlays (e.g. isolate mode labels). */
+  worldToClientXY(worldX: number, worldY: number): { clientX: number; clientY: number } | null
   /**
    * Move the skeleton so its placement origin is at world (x, y), snapped to the same 0.5 grid as canvas drag.
    * Works for direct children of `world` and for spines nested under placeholders.
@@ -936,12 +947,26 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     reconcilePlaceholderAttachments(
       rows: PlaceholderReconcileRow[],
       layoutTarget: PlaceholderLayoutKey = 'main',
+      options?: ReconcilePlaceholderOptions,
     ) {
       const world = worldRef.current
       if (!world) return
+      const byId = new Map(rows.map((r) => [r.id, r.spine]))
+      const isolate = options?.isolateRootChildIds
+      /** World transform of each isolate-float spine **before** detach (preserve on-screen pose). */
+      const isolateWorldTm = new Map<string, Matrix>()
+      if (isolate) {
+        for (const id of isolate) {
+          const s = byId.get(id)
+          if (!s || s.destroyed) continue
+          s.update(0)
+          isolateWorldTm.set(id, s.worldTransform.clone())
+        }
+      }
+
       for (const fn of placeholderDetachRef.current.values()) fn()
       placeholderDetachRef.current.clear()
-      const byId = new Map(rows.map((r) => [r.id, r.spine]))
+
       for (const row of rows) {
         const bindMap = normalizePlaceholderBindings(row.placeholderBindings)
         const childToBones = new Map<string, string[]>()
@@ -958,19 +983,22 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         for (const [boneKey, childIds] of Object.entries(bindMap)) {
           const unique = [...new Set(childIds)]
           if (unique.length < 2) continue
-          const spines = unique.map((id) => byId.get(id)).filter((s): s is Spine => Boolean(s))
+          const nestIds = isolate ? unique.filter((id) => !isolate.has(id)) : unique
+          if (nestIds.length < 2) continue
+          const spines = nestIds.map((id) => byId.get(id)).filter((s): s is Spine => Boolean(s))
           if (spines.length < 2) continue
           const resolvedBone =
             pickPlaceholderBoneForLayout([boneKey], layoutTarget) ?? boneKey
           if (!row.spine.skeleton.findBone(resolvedBone)) continue
           const { detach } = attachSpineStackToHostPlaceholder(row.spine, resolvedBone, spines, world)
           placeholderDetachRef.current.set(`${row.id}::bone::${boneKey}`, detach)
-          for (const id of unique) assigned.add(id)
+          for (const id of nestIds) assigned.add(id)
         }
 
         // One symbol per bone key, or layout-variant keys (same child, multiple bone names) → one attach each.
         for (const [childId, bones] of childToBones) {
           if (assigned.has(childId)) continue
+          if (isolate?.has(childId)) continue
           const existing = bones.filter((b) => !!row.spine.skeleton.findBone(b))
           const bone =
             pickPlaceholderBoneForLayout(existing.length > 0 ? existing : bones, layoutTarget) ??
@@ -980,6 +1008,19 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           if (!child) continue
           const { detach } = attachSpineStackToHostPlaceholder(row.spine, bone, [child], world)
           placeholderDetachRef.current.set(`${row.id}::child::${childId}`, detach)
+        }
+      }
+
+      if (isolate && isolateWorldTm.size > 0) {
+        const wInv = new Matrix().copyFrom(world.worldTransform).invert()
+        for (const id of isolate) {
+          const s = byId.get(id)
+          const cap = isolateWorldTm.get(id)
+          if (!s || !cap || s.destroyed) continue
+          if (s.parent !== world) continue
+          const local = wInv.clone().append(cap)
+          s.setFromMatrix(local)
+          s.update(0)
         }
       }
     },
@@ -1458,6 +1499,24 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       const p = new Point()
       mapClientToWorldXY(application, world, clientX, clientY, p)
       return { x: p.x, y: p.y }
+    },
+
+    worldToClientXY(worldX: number, worldY: number): { clientX: number; clientY: number } | null {
+      const application = appRef.current
+      const world = worldRef.current
+      if (!application || !world) return null
+      const p = new Point(worldX, worldY)
+      world.toGlobal(p, p)
+      const canvas = application.canvas as HTMLCanvasElement
+      const rect = canvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return null
+      const cw = canvas.width
+      const ch = canvas.height
+      if (cw <= 0 || ch <= 0) return null
+      return {
+        clientX: rect.left + (p.x / cw) * rect.width,
+        clientY: rect.top + (p.y / ch) * rect.height,
+      }
     },
 
     setSpineWorldPlacementXY(spine: Spine, x: number, y: number): boolean {
