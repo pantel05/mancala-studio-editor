@@ -18,6 +18,7 @@ import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
 import { normalizePlaceholderBindings } from './spine/placeholderBindingsMap'
 import type { SkeletonPlaceholderInfo } from './spine/scanSkeletonPlaceholders'
 import { snapWorldScalar } from './pixi/snapWorldPosition'
+import { ScaleInspectorIcon } from './ScaleInspectorIcon'
 
 function isCanvasDragPickTargetIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
@@ -1104,6 +1105,7 @@ export const SpineInstanceControls = forwardRef<
       <div className="spine-world-position-values">
         {scaleEdit !== null ? (
           <label className="spine-world-position-edit">
+            <ScaleInspectorIcon />
             <input
               ref={scaleInputRef}
               type="text"
@@ -1144,6 +1146,7 @@ export const SpineInstanceControls = forwardRef<
             onPointerCancel={scaleScrub.handlePointerCancel}
             title={scaleInspectorDisabled ? undefined : 'Drag to scrub · Double-click to type'}
           >
+            <ScaleInspectorIcon />
             {sceneScale.toFixed(3)}
           </span>
         )}

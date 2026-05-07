@@ -10,6 +10,7 @@ import {
 import type { PixiStageHandle } from './PixiStage'
 import type { NineSliceInsets, SpriteRow } from './SpriteRow'
 import { defaultNineSliceInsets } from './pixi/spriteLayer'
+import { ScaleInspectorIcon } from './ScaleInspectorIcon'
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -816,7 +817,10 @@ export function SpriteInstanceControls({
 
         {/* Scale X/Y — hidden when 9-slice is active */}
         {!nineSliceEnabled && <div className="sprite-field sprite-scale-field">
-          <span className="sprite-field-label">Scale</span>
+          <span className="sprite-field-label sprite-field-label--with-scale-icon">
+            <ScaleInspectorIcon />
+            Scale
+          </span>
           <div className="sprite-scale-values">
             {/* Scale X */}
             {scaleXEdit !== null ? (

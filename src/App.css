@@ -1833,61 +1833,56 @@
 }
 
 .spine-world-position-axis-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.25rem;
-  height: 1.15rem;
-  padding: 0 5px;
-  font-size: 9px;
+  display: inline-block;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  border-radius: 3px;
-  color: #fff;
+  letter-spacing: 0.05em;
   flex-shrink: 0;
 }
 
 .spine-world-position-axis-label--x {
-  background: linear-gradient(180deg, #f05555 0%, #c93636 100%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  color: #e85d5d;
 }
 
 .spine-world-position-axis-label--y {
-  background: linear-gradient(180deg, #47cf7a 0%, #2fa85a 100%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  color: #47cf7a;
 }
 
 .spine-world-position-axis-label--neutral {
-  background: linear-gradient(180deg, #5a6678 0%, #3d4656 100%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  color: var(--text-muted);
 }
 
 .spine-axis-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.1rem;
-  height: 1rem;
-  padding: 0 4px;
-  font-size: 9px;
+  display: inline-block;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  border-radius: 3px;
-  color: #fff;
+  letter-spacing: 0.05em;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .spine-axis-chip--x {
-  background: linear-gradient(180deg, #f05555 0%, #c93636 100%);
+  color: #e85d5d;
 }
 
 .spine-axis-chip--y {
-  background: linear-gradient(180deg, #47cf7a 0%, #2fa85a 100%);
+  color: #47cf7a;
 }
 
 .spine-axis-chip--neutral {
-  background: linear-gradient(180deg, #5a6678 0%, #3d4656 100%);
+  color: var(--text-muted);
+}
+
+.inspector-scale-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.92;
+}
+
+.inspector-scale-icon svg {
+  display: block;
 }
 
 .spine-world-position-input {
@@ -1912,6 +1907,10 @@
 
 .spine-world-position-edit:has(.spine-world-position-axis-label--neutral) .spine-world-position-input {
   border-color: rgba(90, 102, 120, 0.55);
+}
+
+.spine-world-position-edit:has(.inspector-scale-icon) .spine-world-position-input {
+  border-color: rgba(0, 170, 255, 0.35);
 }
 
 .spine-world-position-input:focus {
@@ -2901,6 +2900,12 @@
   color: var(--text-dim);
   font-weight: 500;
   letter-spacing: 0.03em;
+}
+
+.sprite-field-label--with-scale-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sprite-world-position-field {
