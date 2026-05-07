@@ -771,6 +771,38 @@ function App() {
   const isolateSeqRef = useRef<Array<{ spine: Spine; listener: AnimationStateListener }>>([])
 
   useEffect(() => {
+    const liveIds = new Set(spineRows.map((r) => r.id))
+    setIsolateSpineOrder((prev) => {
+      const next = prev.filter((id) => liveIds.has(id))
+      return next.length === prev.length ? prev : next
+    })
+    setIsolateAnimQueues((prev) => {
+      let changed = false
+      const next: Record<string, string[]> = {}
+      for (const [id, q] of Object.entries(prev)) {
+        if (!liveIds.has(id)) {
+          changed = true
+          continue
+        }
+        next[id] = q
+      }
+      return changed ? next : prev
+    })
+    setIsolateAnimSpeed((prev) => {
+      let changed = false
+      const next: Record<string, number> = {}
+      for (const [id, speed] of Object.entries(prev)) {
+        if (!liveIds.has(id)) {
+          changed = true
+          continue
+        }
+        next[id] = speed
+      }
+      return changed ? next : prev
+    })
+  }, [spineRows])
+
+  useEffect(() => {
     if (!canvasDragSpineId) return
     if (!spineRows.some((r) => r.id === canvasDragSpineId)) setCanvasDragSpineId(null)
   }, [canvasDragSpineId, spineRows])
@@ -1141,6 +1173,9 @@ function App() {
     if (order.length > 0) stageRef.current?.syncFullLayerOrder(order)
   }, [layerOrder, spineRows, spriteRows])
 
+  // FIXME (isolate): Wrong world position/scale for nested symbols in Isolate mode; symptoms can
+  // carry over or interact with Main view. Next pass: audit reconcile order vs pinnedBone offsets
+  // when toggling isolate / atlas / layout (this layout effect + normal-mode useEffect above).
   useLayoutEffect(() => {
     const stage = stageRef.current
     if (!stage) return
@@ -2339,6 +2374,7 @@ function App() {
       const rows = spineRowsRef.current
       const row = rows.find((r) => r.id === rowId)
       if (!row) return
+      stopIsolatePlayback()
       const nextRows = spineRowsAfterRemoval(rows, rowId)
       stageRef.current?.reconcilePlaceholderAttachments(
         nextRows.map((r) => ({
@@ -2355,7 +2391,7 @@ function App() {
       setSelectedSpineId((sel) => (sel === rowId ? null : sel))
       setCanvasDragSpineId((id) => (id === rowId ? null : id))
     },
-    [busy, placeholderLayoutTarget],
+    [busy, placeholderLayoutTarget, stopIsolatePlayback],
   )
 
   const removeSpriteFromProject = useCallback(
