@@ -59,7 +59,7 @@ import {
   computeScenarioDurationSec,
   computeScenarioSoloPinnedChildIds,
   orderTracksLikeLayerOrder,
-  seedScenarioTracksFromScene,
+  emptyScenarioTracksFromScene,
 } from './scenario/scenarioModel'
 import type { ScenarioMarker, ScenarioTrack } from './scenario/scenarioTypes'
 import { newScenarioMarkerId } from './scenario/scenarioTypes'
@@ -74,7 +74,10 @@ import {
 } from './scene/sceneSnapshot'
 import { effectiveLayerVisible } from './scene/layerVisibility'
 import { spineRowsAfterRemoval } from './scene/spineRowsAfterRemoval'
-import { ViewportMetricsOverlay } from './ViewportMetricsOverlay'
+// Metrics overlay (FPS / heap / spine counts) — disabled to avoid extra per-frame work; re-enable:
+// 1) Uncomment this import
+// 2) Uncomment the "Metrics" checkbox + `<ViewportMetricsOverlay ... />` block (search "ViewportMetricsOverlay")
+// import { ViewportMetricsOverlay } from './ViewportMetricsOverlay'
 import { applyPlaceholderBinding } from './spine/applyPlaceholderBindingState'
 import { effectivePinnedBoneOffset } from './spine/pinnedBoneLayout'
 import type { PlaceholderLayoutKey } from './spine/placeholderLayoutResolution'
@@ -107,7 +110,11 @@ const INSPECTOR_LAYOUT_BADGE: Record<PlaceholderLayoutKey, string> = {
 import { filesByLowerName, findAtlasFileForStemTag } from './spine/findAtlasForStem'
 import { loadSpineFromFileGroup } from './spine/loadSpineFromFileGroup'
 import { EDITOR_VERSION } from './editorVersion'
+import { snapWorldScalar } from './pixi/snapWorldPosition'
 import './App.css'
+
+/** World-space spacing between isolated skeletons in a centered horizontal row (isolate preview only). */
+const ISOLATE_ROW_STEP_WORLD = 220
 
 type LoadOutcome = {
   loaded: string[]
@@ -759,6 +766,8 @@ function App() {
     isolateAnimSpeedRef.current = isolateAnimSpeed
   }, [isolateAnimSpeed])
   const isolateBackupRef = useRef<IsolateModeBackup | null>(null)
+  /** When isolate list changes, re-layout row at origin + refit camera (see isolate layout effect). */
+  const isolateCamLayoutKeyRef = useRef<string>('')
   const pendingIsolateRestoreRef = useRef<IsolateModeBackup | null>(null)
   const isolateAnimQueuesRef = useRef(isolateAnimQueues)
   useEffect(() => {
@@ -1149,17 +1158,60 @@ function App() {
   )
 
   const atlas1xAvailable = useMemo(
-    () => spineRows.some((r) => r.skeletonSourceFile && (r.atlasAvailableTags ?? []).includes('1x')),
+    () =>
+      spineRows.some(
+        (r) =>
+          (r.atlasAvailableTags ?? []).includes('1x') || (r.activeAtlasTag ?? '') === '1x',
+      ),
     [spineRows],
   )
   const atlas2xAvailable = useMemo(
-    () => spineRows.some((r) => r.skeletonSourceFile && (r.atlasAvailableTags ?? []).includes('2x')),
+    () =>
+      spineRows.some(
+        (r) =>
+          (r.atlasAvailableTags ?? []).includes('2x') || (r.activeAtlasTag ?? '') === '2x',
+      ),
     [spineRows],
   )
   const atlasStemPreviewVisible = atlas1xAvailable || atlas2xAvailable
 
+  /** Toolbar highlight: match loader preference (@2x first) so @2x is active when unset. */
+  useEffect(() => {
+    if (atlasSessionTag != null) return
+    if (atlas2xAvailable) setAtlasSessionTag('2x')
+    else if (atlas1xAvailable) setAtlasSessionTag('1x')
+  }, [atlasSessionTag, atlas1xAvailable, atlas2xAvailable])
+
   const [hierarchyDragId, setHierarchyDragId] = useState<string | null>(null)
   const [hierarchyDragOverId, setHierarchyDragOverId] = useState<string | null>(null)
+
+  /** Run before placeholder reconcile on the same frame so scene poses / playback apply first (exit isolate). */
+  useLayoutEffect(() => {
+    if (isolateMode) return
+    const b = pendingIsolateRestoreRef.current
+    if (!b) return
+    pendingIsolateRestoreRef.current = null
+    const next = applySceneSnapshot(spineRowsRef.current, b.scene, b.layoutTarget)
+    for (const r of next) {
+      const pb = b.spinePlayback[r.id]
+      if (pb) restoreSpinePlaybackBackup(r.spine, pb)
+      else if (!r.spine.destroyed) resetSpineToSetupPoseAndClearTracks(r.spine)
+    }
+    for (const r of spriteRowsRef.current) {
+      if (typeof b.spriteVisible[r.id] === 'boolean') {
+        r.sprite.visible = b.spriteVisible[r.id]!
+      }
+    }
+    setLayerOrder(b.layerOrder)
+    setSpineRows(next)
+    setPlaceholderLayoutTarget(b.layoutTarget)
+    setSelectedSpineId(b.selectedSpineId)
+    setSelectedSpriteId(b.selectedSpriteId)
+    setCanvasDragSpineId(b.canvasDragSpineId)
+    setBackdropMode(b.backdropMode)
+    setShowWorldGrid(b.showWorldGrid)
+    setShowMetricsOverlay(b.showMetricsOverlay)
+  }, [isolateMode])
 
   // Sync z-order for all objects (spines + sprites) based on unified layerOrder.
   useEffect(() => {
@@ -1173,9 +1225,6 @@ function App() {
     if (order.length > 0) stageRef.current?.syncFullLayerOrder(order)
   }, [layerOrder, spineRows, spriteRows])
 
-  // FIXME (isolate): Wrong world position/scale for nested symbols in Isolate mode; symptoms can
-  // carry over or interact with Main view. Next pass: audit reconcile order vs pinnedBone offsets
-  // when toggling isolate / atlas / layout (this layout effect + normal-mode useEffect above).
   useLayoutEffect(() => {
     const stage = stageRef.current
     if (!stage) return
@@ -1564,7 +1613,7 @@ function App() {
     setScenarioLaneOrder(lo)
     setScenarioTracks((cur) => {
       if (cur.length === 0 && spineRowsRef.current.length > 0) {
-        return seedScenarioTracksFromScene(lo, spineRowsRef.current)
+        return emptyScenarioTracksFromScene(lo, spineRowsRef.current)
       }
       return orderTracksLikeLayerOrder(cur, lo, spineIds)
     })
@@ -1599,7 +1648,7 @@ function App() {
           if (have.has(id)) continue
           const row = spineRows.find((r) => r.id === id)
           if (!row) continue
-          const seeded = seedScenarioTracksFromScene([id], [row])
+          const seeded = emptyScenarioTracksFromScene([id], [row])
           if (seeded[0]) {
             next.push(seeded[0])
             have.add(id)
@@ -1650,9 +1699,6 @@ function App() {
     // Isolate runs on a neutral canvas scene; preserve prior layout in backup and switch to Main.
     setPlaceholderLayoutTarget('main')
     setIsolateMode(true)
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => stageRef.current?.resetStageView())
-    })
   }, [pauseAll])
 
   const exitIsolateMode = useCallback(() => {
@@ -1671,34 +1717,8 @@ function App() {
     setIsolateAnimSpeed({})
     setIsolateAnimLabels({})
     setIsolatePlaying(false)
-    isolateFitContentKeyRef.current = ''
+    isolateCamLayoutKeyRef.current = ''
   }, [stopIsolatePlayback])
-
-  useLayoutEffect(() => {
-    if (isolateMode) return
-    const b = pendingIsolateRestoreRef.current
-    if (!b) return
-    pendingIsolateRestoreRef.current = null
-    const next = applySceneSnapshot(spineRowsRef.current, b.scene, b.layoutTarget)
-    for (const r of next) {
-      const pb = b.spinePlayback[r.id]
-      if (pb) restoreSpinePlaybackBackup(r.spine, pb)
-    }
-    for (const r of spriteRowsRef.current) {
-      if (typeof b.spriteVisible[r.id] === 'boolean') {
-        r.sprite.visible = b.spriteVisible[r.id]!
-      }
-    }
-    setLayerOrder(b.layerOrder)
-    setSpineRows(next)
-    setPlaceholderLayoutTarget(b.layoutTarget)
-    setSelectedSpineId(b.selectedSpineId)
-    setSelectedSpriteId(b.selectedSpriteId)
-    setCanvasDragSpineId(b.canvasDragSpineId)
-    setBackdropMode(b.backdropMode)
-    setShowWorldGrid(b.showWorldGrid)
-    setShowMetricsOverlay(b.showMetricsOverlay)
-  }, [isolateMode])
 
   useEffect(() => {
     if (!isolateMode) return
@@ -1730,25 +1750,42 @@ function App() {
     stopIsolatePlayback()
   }, [isolateSpineOrder, isolateAnimQueues, isolateMode, stopIsolatePlayback])
 
-  /** Only refit the canvas when the **set** of isolated skeletons changes (add/remove). Reordering draw order must not move the camera. */
-  const isolateFitContentKeyRef = useRef<string>('')
+  /**
+   * Isolate preview uses a **neutral world layout** (centered row on Y = 0), not main-scene coordinates.
+   * Runs after the visibility effect so bounds are valid. Camera resets then fits visible spines.
+   */
   useEffect(() => {
     if (!isolateMode) {
-      isolateFitContentKeyRef.current = ''
+      isolateCamLayoutKeyRef.current = ''
       return
     }
-    const contentKey = [...isolateSpineOrder].sort().join('\t')
-    if (contentKey === isolateFitContentKeyRef.current) {
+    if (isolateSpineOrder.length === 0) {
+      if (isolateCamLayoutKeyRef.current !== '__empty__') {
+        isolateCamLayoutKeyRef.current = '__empty__'
+        requestAnimationFrame(() => stageRef.current?.resetStageView())
+      }
       return
     }
-    isolateFitContentKeyRef.current = contentKey
-    const id = requestAnimationFrame(() => {
-      const stage = stageRef.current
-      if (!stage) return
-      if (isolateSpineOrder.length === 0) stage.resetStageView()
-      else stage.fitAllSpinesInView()
+    const key = isolateSpineOrder.join('|')
+    if (key === isolateCamLayoutKeyRef.current) return
+    isolateCamLayoutKeyRef.current = key
+
+    const stage = stageRef.current
+    if (!stage) return
+    const n = isolateSpineOrder.length
+    for (let i = 0; i < n; i++) {
+      const id = isolateSpineOrder[i]!
+      const row = spineRowsRef.current.find((r) => r.id === id)
+      if (!row) continue
+      const x = snapWorldScalar((i - (n - 1) / 2) * ISOLATE_ROW_STEP_WORLD)
+      stage.setSpineWorldPlacementXY(row.spine, x, 0)
+    }
+    requestAnimationFrame(() => {
+      const s = stageRef.current
+      if (!s) return
+      s.resetStageView()
+      s.fitAllSpinesInView()
     })
-    return () => cancelAnimationFrame(id)
   }, [isolateMode, isolateSpineOrder])
 
   const runLoad = useCallback(async (files: File[]) => {
@@ -2840,7 +2877,7 @@ function App() {
       if (byTrackId.has(id)) continue
       const row = newRows.find((r) => r.id === id)
       if (!row) continue
-      const seeded = seedScenarioTracksFromScene([id], [row])
+      const seeded = emptyScenarioTracksFromScene([id], [row])
       if (seeded[0]) {
         restoredTracks.push(seeded[0])
         byTrackId.set(id, seeded[0])
@@ -3451,11 +3488,13 @@ function App() {
                 <select
                   className="editor-select"
                   value={placeholderLayoutTarget}
-                  disabled={scenarioMode}
+                  disabled={scenarioMode || isolateMode}
                   title={
-                    scenarioMode
-                      ? 'Layouts are fixed to Main while Scenario is on (independent composition view). Exit Scenario to change layout.'
-                      : undefined
+                    isolateMode
+                      ? 'Layouts are disabled in Isolate mode. Exit Isolate to change layout.'
+                      : scenarioMode
+                        ? 'Layouts are fixed to Main while Scenario is on (independent composition view). Exit Scenario to change layout.'
+                        : undefined
                   }
                   onChange={(e) =>
                     setPlaceholderLayoutTarget(e.target.value as PlaceholderLayoutKey)
@@ -3510,6 +3549,7 @@ function App() {
                   World grid
                 </span>
               </label>
+              {/* Metrics — re-enable with `ViewportMetricsOverlay` import above
               <label className="editor-field-inline editor-checkbox">
                 <input
                   type="checkbox"
@@ -3518,6 +3558,7 @@ function App() {
                 />
                 <span className="editor-field-label">Metrics</span>
               </label>
+              */}
               {atlasStemPreviewVisible && (
                 <div
                   className="editor-atlas-stem"
@@ -3607,6 +3648,7 @@ function App() {
                       : `${VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]} · composition`
                     : VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]}
                 </div>
+                {/* Metrics overlay — re-enable with import + toolbar checkbox above
                 {showMetricsOverlay ? (
                   <ViewportMetricsOverlay
                     stageRef={stageRef}
@@ -3614,6 +3656,7 @@ function App() {
                     selectedSpineId={selectedSpineId}
                   />
                 ) : null}
+                */}
                 <IsolateAnimLabelsOverlay
                   active={isolateMode}
                   isolateSpineOrder={isolateSpineOrder}

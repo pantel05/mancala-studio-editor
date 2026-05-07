@@ -268,26 +268,14 @@ const WORLD_GRID_ANCHORS_Z = -499_999
 
 /** Caps HiDPI renderer resolution to reduce GPU memory and fill cost in heavy scenes. */
 const EDITOR_MAX_DEVICE_RESOLUTION = 1.35
+/**
+ * Pixi ticker default `maxFPS` is 0 (no cap), so on 120Hz+ displays the render loop can run
+ * well above 60 Hz and show high “empty scene” CPU in Chrome. Cap keeps idle authoring closer
+ * to one vsync bucket without affecting loaded-asset work much.
+ */
+const EDITOR_MAX_TICKER_FPS = 60
 
 type StageScreenDim = { w: number; h: number }
-
-/** True if any skeleton in the world tree is driving runtime animation this frame. */
-function anySpineAutoUpdating(root: Container): boolean {
-  const stack: Container[] = [root]
-  while (stack.length > 0) {
-    const node = stack.pop()!
-    for (let i = 0; i < node.children.length; i++) {
-      const c = node.children[i]
-      if (c instanceof Spine) {
-        if (c.autoUpdate) return true
-        stack.push(c)
-      } else if (c instanceof Container) {
-        stack.push(c)
-      }
-    }
-  }
-  return false
-}
 
 /** Logical view size: prefer Pixi `screen`, fall back to host layout when still 0×0. */
 function readStageViewSize(application: Application, host: HTMLElement): StageScreenDim | null {
@@ -627,6 +615,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
       app = application
       appRef.current = application
+      application.ticker.maxFPS = EDITOR_MAX_TICKER_FPS
       host.appendChild(application.canvas)
 
       application.stage.eventMode = 'static'
@@ -812,15 +801,15 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           if (gridOn) {
             const spines: Spine[] = []
             for (const c of wld.children) {
-              if (c instanceof Spine) spines.push(c)
+              if (c instanceof Spine && c.visible && !c.destroyed) spines.push(c)
             }
-            const liveAnim = anySpineAutoUpdating(wld)
             anchorThrottlePhase = (anchorThrottlePhase + 1) & 1
             const spineCount = spines.length
             const spineCountChanged = spineCount !== lastWorldDirectSpineCount
             lastWorldDirectSpineCount = spineCount
+            // Repaint anchors on alternating ticks when only animation moves roots (avoids full Graphics clears at display refresh).
             const paintAnchors =
-              geomDirty || liveAnim || anchorThrottlePhase === 0 || spineCountChanged
+              geomDirty || spineCountChanged || anchorThrottlePhase === 0
             if (paintAnchors) {
               paintWorldGridSpineAnchors(wgAnchors, wld, spines)
             }

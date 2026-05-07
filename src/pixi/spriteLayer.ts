@@ -1,6 +1,13 @@
 import { NineSliceSprite, Sprite, Texture, type Application, type Container, type FederatedPointerEvent } from 'pixi.js'
 import { Point } from 'pixi.js'
 import type { NineSliceInsets, SpriteRow } from '../SpriteRow'
+import {
+  clientPointerToWorldXY,
+  initAxisDragSession,
+  maskWorldDelta,
+  updateAxisLockOnMove,
+  type AxisDragSession,
+} from './axisLockedPointerDrag'
 import { snapWorldScalar } from './snapWorldPosition'
 
 // ---------------------------------------------------------------------------
@@ -35,18 +42,20 @@ export function attachSpriteDrag(
   sprite.cursor = 'grab'
 
   let dragging = false
-  const lastLocal = new Point()
+  const lastWorldPtr = new Point()
+  let axisSession: AxisDragSession = initAxisDragSession(0, 0, false)
 
   const onWinMove = (e: PointerEvent) => {
     if (!dragging) return
-    const g = new Point()
-    app.renderer.events.mapPositionToPoint(g, e.clientX, e.clientY)
-    const cur = world.toLocal(g)
-    sprite.position.x += cur.x - lastLocal.x
-    sprite.position.y += cur.y - lastLocal.y
-    sprite.position.x = snapWorldScalar(sprite.position.x)
-    sprite.position.y = snapWorldScalar(sprite.position.y)
-    lastLocal.copyFrom(cur)
+    const curWorld = new Point()
+    clientPointerToWorldXY(app, world, e.clientX, e.clientY, curWorld)
+    const dwx = curWorld.x - lastWorldPtr.x
+    const dwy = curWorld.y - lastWorldPtr.y
+    updateAxisLockOnMove(axisSession, e.clientX, e.clientY, e.shiftKey)
+    const m = maskWorldDelta(dwx, dwy, e.shiftKey, axisSession)
+    sprite.position.x = snapWorldScalar(sprite.position.x + m.x)
+    sprite.position.y = snapWorldScalar(sprite.position.y + m.y)
+    lastWorldPtr.copyFrom(curWorld)
   }
 
   const onWinUp = () => {
@@ -67,7 +76,9 @@ export function attachSpriteDrag(
     dragging = true
     opts?.onDragStart?.(e.clientX, e.clientY)
     sprite.cursor = 'grabbing'
-    lastLocal.copyFrom(e.getLocalPosition(world))
+    const ne = (e.nativeEvent ?? e) as PointerEvent
+    axisSession = initAxisDragSession(ne.clientX, ne.clientY, ne.shiftKey)
+    clientPointerToWorldXY(app, world, ne.clientX, ne.clientY, lastWorldPtr)
     window.addEventListener('pointermove', onWinMove)
     window.addEventListener('pointerup', onWinUp)
     window.addEventListener('pointercancel', onWinUp)

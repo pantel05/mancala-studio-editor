@@ -177,9 +177,9 @@ export function IsolateModePanel({
       <div className="isolate-panel-head">
         <div className="isolate-panel-title">Isolate mode</div>
         <p className="isolate-panel-help">
-          Starts with an empty canvas — add skeletons from the hierarchy below (root or nested). Use the <strong>title bar</strong>{' '}
+          Starts with an empty canvas — add skeletons from the hierarchy below (root or nested). Added rigs are laid out in a <strong>row centered on world (0, 0)</strong> (not their main-scene positions); the view resets and fits automatically. Use the <strong>title bar</strong>{' '}
           <strong>Play</strong>, <strong>Pause</strong>, and <strong>Restart</strong> buttons (same as the main editor) to run, stop, or reset isolate
-          queues. Each object plays its animation list in order (in parallel with others). Drag on the canvas to move instances; use{' '}
+          queues. Each object plays its animation list in order (in parallel with others). Drag on the canvas to move instances for preview only; use{' '}
           <strong>In front</strong> / <strong>Behind</strong> for draw order (which skeleton paints on top). Reorder clips via the ⋮⋮ handle or row
           arrows. Exit from the canvas when done.
         </p>

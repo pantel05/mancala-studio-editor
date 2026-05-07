@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import type { PixiStageHandle } from './PixiStage'
 import type { SpineControlRow } from './SpineInstanceControls'
 
@@ -9,11 +9,10 @@ type Props = {
 }
 
 export function ViewportMetricsOverlay({ stageRef, spineRows, selectedSpineId }: Props) {
-  const [text, setText] = useState('…')
+  const preRef = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
     let id = 0
-    let lastPrinted = ''
     const tick = () => {
       const snap = stageRef.current?.getPerformanceMetrics()
       const next =
@@ -42,10 +41,8 @@ export function ViewportMetricsOverlay({ stageRef, spineRows, selectedSpineId }:
               }
               return lines.join('\n')
             })()
-      if (next !== lastPrinted) {
-        lastPrinted = next
-        setText(next)
-      }
+      const el = preRef.current
+      if (el && el.textContent !== next) el.textContent = next
       id = requestAnimationFrame(tick)
     }
     id = requestAnimationFrame(tick)
@@ -55,7 +52,9 @@ export function ViewportMetricsOverlay({ stageRef, spineRows, selectedSpineId }:
   return (
     <div className="editor-viewport-metrics" aria-label="Performance metrics overlay">
       <div className="editor-viewport-metrics-title">Metrics</div>
-      <pre className="editor-viewport-metrics-body">{text}</pre>
+      <pre ref={preRef} className="editor-viewport-metrics-body">
+        Preview starting…
+      </pre>
     </div>
   )
 }

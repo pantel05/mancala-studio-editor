@@ -119,7 +119,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <strong>Drop static images</strong> (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.gif</code>) directly onto the canvas to add them as background or overlay sprites — no atlas required.
                   </li>
                   <li>
-                    <strong>Position</strong> each object on the canvas by dragging it, or by typing exact coordinates in the
+                    <strong>Position</strong> each object on the canvas by dragging it (optionally hold <kbd>Shift</kbd> to move along world X or Y only — see <strong>⑧ Viewport &amp; canvas</strong>), or by typing exact coordinates in the
                     Inspector's <em>World Position</em> fields.
                   </li>
                   <li>
@@ -426,14 +426,20 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   <tbody>
                     <tr><td><strong>Scroll wheel</strong></td><td>Zoom in / out centred on the cursor (about <strong>1%</strong> to <strong>400%</strong> of world scale; the toolbar shows the current zoom)</td></tr>
                     <tr><td><strong>Middle mouse drag</strong></td><td>Pan the canvas</td></tr>
-                    <tr><td><strong>Shift + drag</strong> (on backdrop)</td><td>Pan the canvas</td></tr>
+                    <tr><td><strong>Shift + drag</strong> (on empty backdrop)</td><td>Pan the canvas (same as middle-mouse pan)</td></tr>
+                    <tr><td><strong>Shift + drag</strong> (on a skeleton or <span className="help-badge-inline help-badge-inline--sprite">IMG</span> sprite)</td><td><strong>Axis-constrained move</strong> in <strong>world</strong> space: after a short pointer move, the stronger direction (horizontal vs vertical) locks the drag to <strong>world X only</strong> or <strong>world Y only</strong> for the rest of that gesture. Release <kbd>Shift</kbd> to move freely on both axes again. Positions still snap to <strong>0.5 px</strong>. Works for root and nested skeletons.</td></tr>
                     <tr><td><strong>Reset view button</strong></td><td>Return to default zoom and position</td></tr>
                   </tbody>
                 </table>
 
                 <h3 className="help-section-title">Moving objects</h3>
                 <ul className="help-list">
-                  <li>Click and drag any skeleton to reposition it. Position snaps to <strong>0.5 px</strong> increments.</li>
+                  <li>Click and drag any skeleton or static sprite to reposition it. Position snaps to <strong>0.5 px</strong> increments.</li>
+                  <li>
+                    Hold <kbd>Shift</kbd> while dragging an object to constrain motion to <strong>one world axis</strong> (horizontal drag → X only, vertical drag → Y only).
+                    After about <strong>4 px</strong> of movement, the dominant direction picks the axis and keeps it for that drag until you release the mouse.
+                    Release <kbd>Shift</kbd> during the drag to return to free two-axis movement. (On the <strong>empty backdrop</strong>, <kbd>Shift</kbd> + drag still <strong>pans</strong> the view — see above.)
+                  </li>
                   <li>If multiple skeletons overlap, click on the one you want in the <em>Hierarchy</em> first, then drag from the canvas.</li>
                   <li>A <strong>green tooltip</strong> follows the cursor while dragging, showing the live X / Y position.</li>
                   <li>Locked objects (lock icon in Hierarchy) cannot be dragged.</li>
@@ -477,7 +483,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     Open <strong>Add from hierarchy</strong> and pick any loaded skeleton — <strong>root or nested</strong> (symbols under placeholders are listed with a <em>(nested)</em> tag).
                   </li>
                   <li>
-                    Nested symbols are shown <strong>alone</strong>: the parent rig is not drawn. The editor temporarily places them on the world root at the same on-screen pose they had while attached.
+                    Nested symbols are shown <strong>alone</strong>: the parent rig is not drawn. In Isolate mode the canvas uses a <strong>neutral layout</strong> — added skeletons are placed in a <strong>horizontal row centered on world (0, 0)</strong>, not at their main-scene coordinates. The camera resets and fits that row when you add or reorder the isolate list.
                   </li>
                   <li>
                     Remove a skeleton from the isolate list with its remove control; draw order and per-object settings for that id are cleared.
@@ -502,8 +508,8 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <h3 className="help-section-title">Draw order &amp; canvas</h3>
                 <ul className="help-list">
                   <li><strong>In front</strong> / <strong>Behind</strong> reorder the isolate list: the first entry draws on top among isolated skeletons.</li>
-                  <li>Drag skeletons on the canvas to reposition them; the skeleton is updated on every drag step so all bones and meshes stay aligned with the instance.</li>
-                  <li>The view refits when you add or remove skeletons, not when you only change draw order.</li>
+                  <li>Drag skeletons on the canvas to reposition them for preview only (main-scene poses are restored when you exit). The same <kbd>Shift</kbd> axis-constrained dragging as in the main view applies (world X or Y only).</li>
+                  <li>Changing the isolate <strong>list membership or order</strong> (including <strong>In front</strong> / <strong>Behind</strong>) re-applies the centered row and recenters the camera. <strong>Layouts</strong> in the Game view toolbar are disabled during Isolate — the preview stays on <strong>Main</strong> world space.</li>
                 </ul>
 
                 <h3 className="help-section-title">Captions</h3>
@@ -553,7 +559,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
 
                 <h3 className="help-section-title">Inspector while in Scenario mode</h3>
                 <p className="help-p">
-                  Per-skeleton <strong>Play / Pause / Loop / Speed / Scrub</strong> in the Inspector are <strong>locked</strong> so they do not fight the composition clock. You can still edit placement, skins, bindings, and other non-transport fields.
+                  Per-skeleton <strong>Play / Pause / Loop / Speed / Scrub</strong> in the Inspector are <strong>locked</strong> so they do not fight the composition clock. You can still edit placement, skins, bindings, and other non-transport fields. Dragging objects on the composition canvas uses the same rules as the main Game view, including <kbd>Shift</kbd> for axis-locked moves (see <strong>⑧ Viewport &amp; canvas</strong>).
                 </p>
 
                 <h3 className="help-section-title">Saving &amp; reopening</h3>
@@ -673,7 +679,8 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                     <tr><td><kbd>Ctrl+Y</kbd></td><td>Redo (Windows alternative)</td></tr>
                     <tr><td><kbd>Scroll wheel</kbd></td><td>Zoom canvas in / out</td></tr>
                     <tr><td><kbd>Middle mouse drag</kbd></td><td>Pan canvas</td></tr>
-                    <tr><td><kbd>Shift + drag</kbd> on backdrop</td><td>Pan canvas</td></tr>
+                    <tr><td><kbd>Shift + drag</kbd> on empty backdrop</td><td>Pan canvas</td></tr>
+                    <tr><td><kbd>Shift + drag</kbd> on skeleton / sprite</td><td>Move along world X <em>or</em> world Y only (axis locks after ~4 px); release <kbd>Shift</kbd> for free drag</td></tr>
                     <tr><td><kbd>Double-click</kbd> World Position value</td><td>Enter exact coordinate</td></tr>
                     <tr><td><kbd>Drag</kbd> World Position / Bone Offset label</td><td>Scrub value left / right</td></tr>
                     <tr><td><kbd>Escape</kbd></td><td>Close any open modal or dialog</td></tr>

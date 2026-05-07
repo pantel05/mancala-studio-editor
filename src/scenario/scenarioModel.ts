@@ -136,3 +136,21 @@ export function seedScenarioTracksFromScene(
   }
   return tracks
 }
+
+/**
+ * One timeline row per spine in `layerOrder`, each with **no clips** — blocks stay hidden until the user adds them.
+ * Use when entering Scenario mode on a fresh session, when new spines appear while Scenario is on, or when a loaded
+ * project has no track row for a spine. Saved `.mancala` clips still come from {@link remapScenarioStateFromProject}.
+ */
+export function emptyScenarioTracksFromScene(
+  layerOrder: string[],
+  spineRows: SpineControlRow[],
+): ScenarioTrack[] {
+  const tracks: ScenarioTrack[] = []
+  for (const id of layerOrder) {
+    const row = spineRows.find((r) => r.id === id)
+    if (!row) continue
+    tracks.push({ spineRowId: id, clips: [] })
+  }
+  return tracks
+}

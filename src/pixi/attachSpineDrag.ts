@@ -1,7 +1,34 @@
 import type { Application, Container, FederatedPointerEvent } from 'pixi.js'
 import { Point } from 'pixi.js'
 import type { Spine } from '@esotericsoftware/spine-pixi-v8'
+import {
+  clientPointerToWorldXY,
+  initAxisDragSession,
+  maskWorldDelta,
+  updateAxisLockOnMove,
+  type AxisDragSession,
+} from './axisLockedPointerDrag'
 import { snapWorldScalar } from './snapWorldPosition'
+
+/** Move spine origin by Δ in world space (nested or root); snaps to {@link snapWorldScalar} grid. */
+function applySpineWorldDelta(spine: Spine, world: Container, dWorldX: number, dWorldY: number): void {
+  if (dWorldX === 0 && dWorldY === 0) return
+  const p = new Point()
+  spine.getGlobalPosition(p)
+  world.toLocal(p, undefined, p)
+  const nx = snapWorldScalar(p.x + dWorldX)
+  const ny = snapWorldScalar(p.y + dWorldY)
+  const parent = spine.parent
+  if (!parent) return
+  if (parent === world) {
+    spine.position.set(nx, ny)
+  } else {
+    const globalScratch = new Point()
+    world.toGlobal(new Point(nx, ny), globalScratch)
+    parent.toLocal(globalScratch, undefined, spine.position)
+  }
+  spine.update(0)
+}
 
 const cleanups = new WeakMap<Spine, () => void>()
 
@@ -33,23 +60,19 @@ export function attachSpineDrag(
   spine.cursor = 'grab'
 
   let dragging = false
-  const lastLocal = new Point()
+  const lastWorldPtr = new Point()
+  let axisSession: AxisDragSession = initAxisDragSession(0, 0, false)
 
   const onWinMove = (e: PointerEvent) => {
     if (!dragging) return
-    const g = new Point()
-    app.renderer.events.mapPositionToPoint(g, e.clientX, e.clientY)
-    /** Use the spine's actual parent for local-space delta so nested children
-     *  (attached under a placeholder bone wrapper) move in bone space, not world space. */
-    const posParent = spine.parent ?? world
-    const cur = posParent.toLocal(g)
-    spine.position.x += cur.x - lastLocal.x
-    spine.position.y += cur.y - lastLocal.y
-    spine.position.x = snapWorldScalar(spine.position.x)
-    spine.position.y = snapWorldScalar(spine.position.y)
-    lastLocal.copyFrom(cur)
-    /** Apply skeleton world transforms immediately so every bone/mesh follows the container while dragging. */
-    spine.update(0)
+    const curWorld = new Point()
+    clientPointerToWorldXY(app, world, e.clientX, e.clientY, curWorld)
+    const dwx = curWorld.x - lastWorldPtr.x
+    const dwy = curWorld.y - lastWorldPtr.y
+    updateAxisLockOnMove(axisSession, e.clientX, e.clientY, e.shiftKey)
+    const m = maskWorldDelta(dwx, dwy, e.shiftKey, axisSession)
+    applySpineWorldDelta(spine, world, m.x, m.y)
+    lastWorldPtr.copyFrom(curWorld)
   }
 
   const onWinUp = () => {
@@ -71,7 +94,9 @@ export function attachSpineDrag(
     dragging = true
     opts?.onDragStart?.(e.clientX, e.clientY)
     spine.cursor = 'grabbing'
-    lastLocal.copyFrom(e.getLocalPosition(spine.parent ?? world))
+    const ne = (e.nativeEvent ?? e) as PointerEvent
+    axisSession = initAxisDragSession(ne.clientX, ne.clientY, ne.shiftKey)
+    clientPointerToWorldXY(app, world, ne.clientX, ne.clientY, lastWorldPtr)
     window.addEventListener('pointermove', onWinMove)
     window.addEventListener('pointerup', onWinUp)
     window.addEventListener('pointercancel', onWinUp)
