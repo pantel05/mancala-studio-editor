@@ -1181,11 +1181,17 @@ function App() {
     if (!stage) return
     const isolateRootChildIds =
       isolateMode
-        ? new Set(
-            isolateSpineOrder.filter((id) =>
-              spineRows.some((r) => r.id === id && r.pinnedUnder != null),
-            ),
-          )
+        ? (() => {
+            const isolated = new Set(isolateSpineOrder)
+            return new Set(
+              isolateSpineOrder.filter((id) => {
+                const row = spineRows.find((r) => r.id === id)
+                if (!row?.pinnedUnder) return false
+                // Float only when host is hidden in isolate; if host is visible, keep child nested.
+                return !isolated.has(row.pinnedUnder.hostRowId)
+              }),
+            )
+          })()
         : null
     stage.reconcilePlaceholderAttachments(
       spineRows.map((r) => ({
@@ -1641,6 +1647,8 @@ function App() {
     setIsolateAnimLabels({})
     setIsolateAnimSpeed({})
     setIsolatePlaying(false)
+    // Isolate runs on a neutral canvas scene; preserve prior layout in backup and switch to Main.
+    setPlaceholderLayoutTarget('main')
     setIsolateMode(true)
     requestAnimationFrame(() => {
       requestAnimationFrame(() => stageRef.current?.resetStageView())
@@ -3482,7 +3490,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className={`btn btn-compact${scenarioMode ? ' is-active' : ''}`}
+                className={`btn btn-compact scenario-mode-btn${scenarioMode ? ' is-active' : ''}`}
                 onClick={() => (scenarioMode ? disableScenarioMode() : enableScenarioMode())}
                 disabled={spineRows.length === 0 || isolateMode}
                 title="Scene-wide composition timeline (global clock, one row per Spine)"

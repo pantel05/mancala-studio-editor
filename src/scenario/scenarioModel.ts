@@ -18,6 +18,12 @@ export function findClipAtTime(clips: ScenarioClip[], t: number): ScenarioClip |
   for (const c of clips) {
     if (t >= c.start && t < c.end) return c
   }
+  // Keep the final pose visible at/after composition end instead of hiding on the exact last frame.
+  let tail: ScenarioClip | undefined
+  for (const c of clips) {
+    if (!tail || c.end > tail.end) tail = c
+  }
+  if (tail && t >= tail.end) return tail
   return undefined
 }
 

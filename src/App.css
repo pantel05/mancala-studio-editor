@@ -1537,6 +1537,17 @@
   font-size: 11px;
 }
 
+.scenario-mode-btn.is-active:not(:disabled) {
+  border-color: #5a8f32;
+  background: linear-gradient(180deg, #5fa832 0%, #4a8a28 100%);
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
+}
+
+.scenario-mode-btn.is-active:not(:disabled):hover {
+  background: linear-gradient(180deg, #6abf38 0%, #559930 100%);
+}
+
 .editor-atlas-stem {
   display: flex;
   align-items: center;
