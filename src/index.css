@@ -1,36 +1,46 @@
 :root {
-  /* Unity / Unreal–style slate */
-  --text: #e4e4e4;
-  --text-dim: #b0b0b0;
-  --text-muted: #858585;
-  --text-label: #9d9d9d;
+  /* Charcoal + cyan (reference: modern rigging / animation tool mockups) */
+  --text: #e8ecf1;
+  --text-dim: #9babbf;
+  --text-muted: #6d7d90;
+  --text-label: #7a8a9e;
 
-  --bg-deep: #1e1e1e;
-  --bg-workspace: #252526;
-  --bg-panel: #2d2d2d;
-  --bg-panel-header: #323232;
-  --bg-input: #3c3c3c;
-  --bg-hover: #3e3e40;
+  --bg-deep: #0b0e14;
+  --bg-workspace: #11141c;
+  --bg-panel: #161b24;
+  --bg-panel-header: #1a202c;
+  --bg-input: #1e2533;
+  --bg-hover: rgba(0, 170, 255, 0.09);
 
-  --border: #3f3f46;
-  --border-subtle: #2a2a2a;
-  --border-focus: #569cd6;
+  --border: #2a3344;
+  --border-subtle: #1a2230;
+  --border-focus: #00aaff;
 
-  --accent: #6a9a36;
-  --accent-hover: #7aad42;
-  --accent-pressed: #5a8530;
+  --accent: #00aaff;
+  --accent-hover: #33bbff;
+  --accent-pressed: #0090e0;
+  --accent-border: #0088cc;
+  --accent-glow: rgba(0, 170, 255, 0.22);
+  --accent-glow-strong: rgba(0, 170, 255, 0.45);
+  --accent-ring: rgba(0, 170, 255, 0.35);
+  --accent-glow-soft: rgba(0, 170, 255, 0.14);
+  --accent-glow-banner: rgba(0, 170, 255, 0.18);
 
-  --tab-active: #252526;
-  --tab-inactive: #2d2d2d;
+  --tab-active: #11141c;
+  --tab-inactive: #161b24;
 
-  --status-ok: #89d185;
-  --status-warn: #dcdcaa;
-  --status-err: #f48771;
-  --status-info: #9cdcfe;
+  /* Flat controls (mockup-style — no glossy gradients) */
+  --btn-surface: #1e2533;
+  --btn-surface-hover: #252d3d;
+
+  --status-ok: #5cd88a;
+  --status-warn: #e8d06a;
+  --status-err: #ff7b7b;
+  --status-info: #66d4ff;
 
   font-family:
+    Inter,
     'Segoe UI',
-    'Inter',
     system-ui,
     -apple-system,
     Roboto,

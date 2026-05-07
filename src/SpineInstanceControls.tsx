@@ -1316,7 +1316,7 @@ export const SpineInstanceControls = forwardRef<
       >
         {worldEdit?.axis === 'x' ? (
           <label className="spine-world-position-edit">
-            <span className="spine-world-position-axis-label">X</span>
+            <span className="spine-world-position-axis-label spine-world-position-axis-label--x">X</span>
             <input
               ref={worldPosInputRef}
               type="text"
@@ -1350,12 +1350,15 @@ export const SpineInstanceControls = forwardRef<
             onPointerCancel={worldXScrub.handlePointerCancel}
             title={worldPosDisabled ? undefined : 'Drag to scrub · Double-click to type'}
           >
-            X {worldPosLabels.x}
+            <span className="spine-axis-chip spine-axis-chip--x" aria-hidden="true">
+              X
+            </span>
+            {worldPosLabels.x}
           </span>
         )}
         {worldEdit?.axis === 'y' ? (
           <label className="spine-world-position-edit">
-            <span className="spine-world-position-axis-label">Y</span>
+            <span className="spine-world-position-axis-label spine-world-position-axis-label--y">Y</span>
             <input
               ref={worldPosInputRef}
               type="text"
@@ -1389,7 +1392,10 @@ export const SpineInstanceControls = forwardRef<
             onPointerCancel={worldYScrub.handlePointerCancel}
             title={worldPosDisabled ? undefined : 'Drag to scrub · Double-click to type'}
           >
-            Y {worldPosLabels.y}
+            <span className="spine-axis-chip spine-axis-chip--y" aria-hidden="true">
+              Y
+            </span>
+            {worldPosLabels.y}
           </span>
         )}
       </div>
@@ -1420,7 +1426,7 @@ export const SpineInstanceControls = forwardRef<
       >
         {boneOffsetEdit?.axis === 'x' ? (
           <label className="spine-world-position-edit">
-            <span className="spine-world-position-axis-label">X</span>
+            <span className="spine-world-position-axis-label spine-world-position-axis-label--x">X</span>
             <input
               ref={boneOffsetInputRef}
               type="text"
@@ -1454,12 +1460,15 @@ export const SpineInstanceControls = forwardRef<
             onPointerCancel={boneXScrub.handlePointerCancel}
             title={boneOffsetDisabled ? undefined : 'Drag to scrub · Double-click to type'}
           >
-            X {boneOffsetLabels.x}
+            <span className="spine-axis-chip spine-axis-chip--x" aria-hidden="true">
+              X
+            </span>
+            {boneOffsetLabels.x}
           </span>
         )}
         {boneOffsetEdit?.axis === 'y' ? (
           <label className="spine-world-position-edit">
-            <span className="spine-world-position-axis-label">Y</span>
+            <span className="spine-world-position-axis-label spine-world-position-axis-label--y">Y</span>
             <input
               ref={boneOffsetInputRef}
               type="text"
@@ -1493,7 +1502,10 @@ export const SpineInstanceControls = forwardRef<
             onPointerCancel={boneYScrub.handlePointerCancel}
             title={boneOffsetDisabled ? undefined : 'Drag to scrub · Double-click to type'}
           >
-            Y {boneOffsetLabels.y}
+            <span className="spine-axis-chip spine-axis-chip--y" aria-hidden="true">
+              Y
+            </span>
+            {boneOffsetLabels.y}
           </span>
         )}
       </div>

@@ -2,10 +2,10 @@ import type { Container, Graphics } from 'pixi.js'
 import { Point } from 'pixi.js'
 import type { Spine } from '@esotericsoftware/spine-pixi-v8'
 
-/** Visible on dark backdrop + Solid mode (was easy to mistake for “no grid”). */
-const gridMinor = { width: 1, color: 0x9aa8bd, alpha: 0.48 } as const
-const axisXStroke = { width: 2, color: 0xd95454, alpha: 0.88 } as const
-const axisYStroke = { width: 2, color: 0x4bbd6e, alpha: 0.88 } as const
+/** Thin midnight-blue minor lines (mockup-style; subtle on charcoal backdrop). */
+const gridMinor = { width: 0.65, color: 0x3d4f6e, alpha: 0.32 } as const
+const axisXStroke = { width: 1.5, color: 0xd95454, alpha: 0.9 } as const
+const axisYStroke = { width: 1.5, color: 0x4bbd6e, alpha: 0.9 } as const
 const originFill = { color: 0xffffff, alpha: 0.92 } as const
 const spineAnchorStroke = { width: 2, color: 0x4ec7ff, alpha: 0.82 } as const
 
@@ -97,6 +97,7 @@ export function paintWorldGridGeometry(
   if (!opts.enabled || screenW <= 0 || screenH <= 0) return
 
   const { minX, maxX, minY, maxY } = visibleWorldBounds(world, screenW, screenH)
+
   const sx = Math.max(Math.abs(world.scale.x), 1e-6)
   const step = niceStep(TARGET_GRID_PX / sx)
 

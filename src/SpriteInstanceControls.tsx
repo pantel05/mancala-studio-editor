@@ -743,7 +743,7 @@ export function SpriteInstanceControls({
           <div className="sprite-world-position-values" aria-live="polite" title={posReadoutTitle}>
             {posEdit?.axis === 'x' ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">X</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--x">X</span>
                 <input
                   ref={posInputRef}
                   type="text"
@@ -770,12 +770,15 @@ export function SpriteInstanceControls({
                 onPointerCancel={posXScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                X {posLabels.x}
+                <span className="spine-axis-chip spine-axis-chip--x" aria-hidden="true">
+                  X
+                </span>
+                {posLabels.x}
               </span>
             )}
             {posEdit?.axis === 'y' ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">Y</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--y">Y</span>
                 <input
                   ref={posInputRef}
                   type="text"
@@ -802,7 +805,10 @@ export function SpriteInstanceControls({
                 onPointerCancel={posYScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                Y {posLabels.y}
+                <span className="spine-axis-chip spine-axis-chip--y" aria-hidden="true">
+                  Y
+                </span>
+                {posLabels.y}
               </span>
             )}
           </div>
@@ -815,7 +821,7 @@ export function SpriteInstanceControls({
             {/* Scale X */}
             {scaleXEdit !== null ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">X</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--x">X</span>
                 <input
                   ref={scaleXInputRef}
                   type="text"
@@ -839,14 +845,17 @@ export function SpriteInstanceControls({
                 onPointerCancel={scaleXScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                X {scaleX.toFixed(3)}
+                <span className="spine-axis-chip spine-axis-chip--x" aria-hidden="true">
+                  X
+                </span>
+                {scaleX.toFixed(3)}
               </span>
             )}
 
             {/* Scale Y */}
             {scaleYEdit !== null ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">Y</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--y">Y</span>
                 <input
                   ref={scaleYInputRef}
                   type="text"
@@ -870,7 +879,10 @@ export function SpriteInstanceControls({
                 onPointerCancel={scaleYScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                Y {scaleY.toFixed(3)}
+                <span className="spine-axis-chip spine-axis-chip--y" aria-hidden="true">
+                  Y
+                </span>
+                {scaleY.toFixed(3)}
               </span>
             )}
 
@@ -909,7 +921,7 @@ export function SpriteInstanceControls({
             {/* Width */}
             {sliceWEdit !== null ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">W</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--neutral">W</span>
                 <input
                   ref={sliceWInputRef}
                   type="text"
@@ -933,13 +945,16 @@ export function SpriteInstanceControls({
                 onPointerCancel={sliceWidthScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                W {Math.round(sliceWidth)}
+                <span className="spine-axis-chip spine-axis-chip--neutral" aria-hidden="true">
+                  W
+                </span>
+                {Math.round(sliceWidth)}
               </span>
             )}
             {/* Height */}
             {sliceHEdit !== null ? (
               <label className="spine-world-position-edit">
-                <span className="spine-world-position-axis-label">H</span>
+                <span className="spine-world-position-axis-label spine-world-position-axis-label--neutral">H</span>
                 <input
                   ref={sliceHInputRef}
                   type="text"
@@ -963,7 +978,10 @@ export function SpriteInstanceControls({
                 onPointerCancel={sliceHeightScrub.handlePointerCancel}
                 title={disabled ? undefined : 'Drag to scrub · Double-click to type'}
               >
-                H {Math.round(sliceHeight)}
+                <span className="spine-axis-chip spine-axis-chip--neutral" aria-hidden="true">
+                  H
+                </span>
+                {Math.round(sliceHeight)}
               </span>
             )}
             {/* Proportional size link */}
