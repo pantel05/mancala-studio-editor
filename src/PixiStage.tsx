@@ -6,7 +6,18 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Application, Container, Graphics, Matrix, NineSliceSprite, Point, Sprite } from 'pixi.js'
+import type { MutableRefObject } from 'react'
+import {
+  Application,
+  Batcher,
+  Container,
+  getMaxTexturesPerBatch,
+  Graphics,
+  Matrix,
+  NineSliceSprite,
+  Point,
+  Sprite,
+} from 'pixi.js'
 import { Spine } from '@esotericsoftware/spine-pixi-v8'
 import { attachSpineDrag, detachSpineDrag } from './pixi/attachSpineDrag'
 import {
@@ -122,6 +133,12 @@ export type PixiStageProps = {
   spineSceneRevision?: number
   /** Bump when a spine is swapped in-place (e.g. atlas @1x / @2x) so hit targets refresh. */
   atlasPreviewRevision?: number
+  /**
+   * When `.current` is set, invoked once per Pixi ticker frame with elapsed seconds (same cadence as
+   * rendering, see `EDITOR_MAX_TICKER_FPS`). Scenario composition playback uses this instead of a
+   * separate rAF loop so skeleton poses stay in lockstep with the GPU frame and never “skip” updates.
+   */
+  scenarioCompositionTransportRef?: MutableRefObject<((deltaSec: number) => void) | null>
   /** User clicked the stage backdrop (e.g. to clear canvas pick highlight). */
   onClearDragPointerTarget?: () => void
   /** Left-click on a skeleton on the canvas — sync hierarchy/inspector selection to that instance. */
@@ -267,7 +284,7 @@ const WORLD_GRID_LINES_Z = -500_000
 const WORLD_GRID_ANCHORS_Z = -499_999
 
 /** Caps HiDPI renderer resolution to reduce GPU memory and fill cost in heavy scenes. */
-const EDITOR_MAX_DEVICE_RESOLUTION = 1.35
+const EDITOR_MAX_DEVICE_RESOLUTION = 1.15
 /**
  * Pixi ticker default `maxFPS` is 0 (no cap), so on 120Hz+ displays the render loop can run
  * well above 60 Hz and show high “empty scene” CPU in Chrome. Cap keeps idle authoring closer
@@ -394,6 +411,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     viewportLayoutTarget = 'main',
     spineSceneRevision = 0,
     atlasPreviewRevision = 0,
+    scenarioCompositionTransportRef,
     onClearDragPointerTarget,
     onSpineCanvasPointerDown,
     getSpineDragEnabled,
@@ -499,6 +517,23 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
   onSpriteDragEndRef.current = onSpriteDragEnd
 
   useEffect(() => {
+    if (!pixiWorldReady || !scenarioCompositionTransportRef) return
+    const app = appRef.current
+    if (!app) return
+    const ref = scenarioCompositionTransportRef
+    const onTick = () => {
+      const fn = ref.current
+      if (!fn) return
+      const dt = app.ticker.deltaMS / 1000
+      fn(Math.min(0.25, Math.max(0, dt)))
+    }
+    app.ticker.add(onTick)
+    return () => {
+      app.ticker.remove(onTick)
+    }
+  }, [pixiWorldReady, scenarioCompositionTransportRef])
+
+  useEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
     const scratch = new Point()
@@ -516,7 +551,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       const rect = wrap.getBoundingClientRect()
       const inside = cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom
       if (!inside) {
-        setCursorWorldTip((t) => ({ ...t, show: false }))
+        setCursorWorldTip((t) => (t.show ? { ...t, show: false } : t))
         return
       }
 
@@ -535,13 +570,28 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         mapClientToWorldXY(application, world, cx, cy, scratch)
       }
 
-      setCursorWorldTip({
-        show: true,
-        localX: cx - rect.left,
-        localY: cy - rect.top,
-        wx: scratch.x,
-        wy: scratch.y,
-        mode: placementMode ? 'placement' : 'pointer',
+      const localX = cx - rect.left
+      const localY = cy - rect.top
+      const mode = placementMode ? 'placement' : 'pointer'
+      setCursorWorldTip((prev) => {
+        if (
+          prev.show &&
+          prev.mode === mode &&
+          Math.abs(prev.wx - scratch.x) < 0.02 &&
+          Math.abs(prev.wy - scratch.y) < 0.02 &&
+          Math.abs(prev.localX - localX) < 0.35 &&
+          Math.abs(prev.localY - localY) < 0.35
+        ) {
+          return prev
+        }
+        return {
+          show: true,
+          localX,
+          localY,
+          wx: scratch.x,
+          wy: scratch.y,
+          mode,
+        }
       })
     }
 
@@ -571,7 +621,7 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       pending = null
       if (raf) cancelAnimationFrame(raf)
       raf = 0
-      setCursorWorldTip((t) => ({ ...t, show: false }))
+      setCursorWorldTip((t) => (t.show ? { ...t, show: false } : t))
     }
 
     wrap.addEventListener('pointermove', onWrapMove)
@@ -598,6 +648,12 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
     let disposeVisibilityListener: (() => void) | null = null
 
     const boot = async () => {
+      // Pixi v8.8+ requires `maxTextures` on Batcher; Spine’s DarkTintBatcher extends it. Without this,
+      // every batcher construction logs a deprecation and falls back to `getMaxTexturesPerBatch()`.
+      Batcher.defaultOptions = {
+        ...Batcher.defaultOptions,
+        maxTextures: getMaxTexturesPerBatch(),
+      }
       const application = new Application()
       await application.init({
         resizeTo: host,
@@ -738,9 +794,9 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
         document.removeEventListener('visibilitychange', onVisibilityChange)
       }
 
-      let anchorThrottlePhase = 0
-      /** When direct world children change (e.g. isolate add/remove), always repaint anchors — throttle can skip `clear()` and leave stale crosses. */
+      /** When direct world children change (e.g. isolate add/remove), always repaint anchors. */
       let lastWorldDirectSpineCount = -1
+      let anchorFrameCounter = 0
       application.ticker.add(() => {
         const wld = worldRef.current
         const appLive = appRef.current
@@ -803,13 +859,17 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
             for (const c of wld.children) {
               if (c instanceof Spine && c.visible && !c.destroyed) spines.push(c)
             }
-            anchorThrottlePhase = (anchorThrottlePhase + 1) & 1
             const spineCount = spines.length
             const spineCountChanged = spineCount !== lastWorldDirectSpineCount
             lastWorldDirectSpineCount = spineCount
-            // Repaint anchors on alternating ticks when only animation moves roots (avoids full Graphics clears at display refresh).
+            anchorFrameCounter++
+            // Heavier scenes: repaint root markers less often when only animation moves (camera/static grid unchanged).
+            const anchorStride =
+              spineCount <= 6 ? 2 : spineCount <= 12 ? 3 : spineCount <= 20 ? 4 : 6
             const paintAnchors =
-              geomDirty || spineCountChanged || anchorThrottlePhase === 0
+              geomDirty ||
+              spineCountChanged ||
+              anchorFrameCounter % anchorStride === 0
             if (paintAnchors) {
               paintWorldGridSpineAnchors(wgAnchors, wld, spines)
             }
@@ -897,7 +957,10 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
       syncViewportCenterShell(application, hostEl, centerShell, stageScreenSizeRef)
     }
     cameraLayoutRef.current = to
-    onViewRef.current?.(world.scale.x)
+    const scale = world.scale.x
+    if (Number.isFinite(scale)) {
+      onViewRef.current?.(scale)
+    }
   }, [viewportLayoutTarget, pixiWorldReady])
 
   useEffect(() => {
@@ -1605,7 +1668,12 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
 
   return (
     <div ref={wrapRef} className="pixi-stage-wrap">
-      <div ref={hostRef} className="pixi-stage-host" aria-label="Preview canvas" />
+      <div
+        ref={hostRef}
+        className="pixi-stage-host"
+        role="region"
+        aria-label="Preview canvas"
+      />
       {cursorWorldTip.show ? (
         <div
           className={`pixi-cursor-world-tip${

@@ -2,7 +2,8 @@
   /* Charcoal + cyan (reference: modern rigging / animation tool mockups) */
   --text: #e8ecf1;
   --text-dim: #9babbf;
-  --text-muted: #6d7d90;
+  /* ~4.5:1+ on panel backgrounds (#161b24) for WCAG AA body-style muted text */
+  --text-muted: #8494a8;
   --text-label: #7a8a9e;
 
   --bg-deep: #0b0e14;

@@ -456,8 +456,21 @@ export const SpineInstanceControls = forwardRef<
   ])
   useEffect(() => {
     if (scaleEdit !== null || !spineIsLive(row.spine)) return
+    // Scenario composition applies poses each tick — syncing inspector display scale here fights
+    // `applyScenarioAtCompositionTime` and can cause a maximum-update-depth loop.
+    if (scenarioLocksInspectorTransport) return
+    // Nested symbols: bone animations can drive `spine.scale` every frame — syncing that into
+    // React state while playing fights the runtime and can cascade into excessive updates.
+    if (row.pinnedUnder && playing) return
     setSceneScale((prev) => (Object.is(prev, displayScaleForLayout) ? prev : displayScaleForLayout))
-  }, [displayScaleForLayout, scaleEdit, row.spine])
+  }, [
+    displayScaleForLayout,
+    scaleEdit,
+    row.spine,
+    row.pinnedUnder,
+    playing,
+    scenarioLocksInspectorTransport,
+  ])
   const [scrubTime, setScrubTime] = useState(0)
   const [skinSelect, setSkinSelect] = useState(() => {
     if (!spineIsLive(row.spine)) return ''
@@ -496,6 +509,8 @@ export const SpineInstanceControls = forwardRef<
       setPlaying(false)
       return
     }
+    // Timeline applies clips + `spine.update(0)` — do not reset track 0 to the inspector clip here.
+    if (scenarioLocksInspectorTransport) return
     const cur = spine.skeleton.skin
     if (!cur) setSkinSelect('')
     else {
@@ -532,7 +547,14 @@ export const SpineInstanceControls = forwardRef<
     const te0 = spine.state.tracks[0]
     setScrubTime(te0?.trackTime ?? 0)
     setPlaying(restorePlaying)
-  }, [row.id, row.spine, names, row.placeholderPolicyFrozen, row.placeholderPolicyIgnored])
+  }, [
+    row.id,
+    row.spine,
+    names,
+    row.placeholderPolicyFrozen,
+    row.placeholderPolicyIgnored,
+    scenarioLocksInspectorTransport,
+  ])
 
   useEffect(() => {
     if (!playing || !spineIsLive(row.spine)) return
@@ -541,32 +563,46 @@ export const SpineInstanceControls = forwardRef<
 
   useEffect(() => {
     if (!spineIsLive(row.spine)) return
+    if (scenarioLocksInspectorTransport) return
     row.spine.scale.set(sceneScale)
-  }, [sceneScale, row.spine])
+  }, [sceneScale, row.spine, scenarioLocksInspectorTransport])
 
   /**
    * Live scrub readout while playing — only for the **visible** inspector pane. All rows stay mounted
    * (transport needs refs on every row); without this guard, Play-all would run N RAF loops × setState/frame.
    */
   useEffect(() => {
-    if (!inspectorActive || !playing || names.length === 0) return
+    if (!inspectorActive || !playing || names.length === 0 || scenarioLocksInspectorTransport) return
     let id = 0
+    let cancelled = false
     const tick = () => {
+      if (cancelled) return
       if (!spineIsLive(row.spine)) return
       const te = row.spine.state.tracks[0]
       if (te) setScrubTime(te.trackTime)
       id = requestAnimationFrame(tick)
     }
     id = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(id)
-  }, [inspectorActive, playing, names.length, row.spine])
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(id)
+    }
+  }, [inspectorActive, playing, names.length, row.spine, scenarioLocksInspectorTransport])
 
   /** When opening the inspector for a skeleton that is already playing, sync the scrub once. */
   useEffect(() => {
-    if (!inspectorActive || !playing || names.length === 0 || !spineIsLive(row.spine)) return
+    if (
+      !inspectorActive ||
+      !playing ||
+      names.length === 0 ||
+      !spineIsLive(row.spine) ||
+      scenarioLocksInspectorTransport
+    ) {
+      return
+    }
     const te = row.spine.state.tracks[0]
     if (te) setScrubTime(te.trackTime)
-  }, [inspectorActive, playing, names.length, row.spine])
+  }, [inspectorActive, playing, names.length, row.spine, scenarioLocksInspectorTransport])
 
   useEffect(() => {
     if (playing || names.length === 0 || !spineIsLive(row.spine)) return
@@ -972,7 +1008,7 @@ export const SpineInstanceControls = forwardRef<
     row.spine,
     viewportStageRef,
     inspectorActive,
-    Boolean(worldEdit),
+    Boolean(worldEdit) || scenarioLocksInspectorTransport,
   )
 
   const boneOffsetLabels = useInspectorBoneOffset(
@@ -980,7 +1016,7 @@ export const SpineInstanceControls = forwardRef<
     viewportStageRef,
     inspectorActive,
     isPinned,
-    Boolean(boneOffsetEdit),
+    Boolean(boneOffsetEdit) || scenarioLocksInspectorTransport,
   )
 
   const onWorldPosScrubEditEnd = useCallback(

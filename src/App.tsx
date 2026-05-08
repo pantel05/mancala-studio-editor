@@ -59,8 +59,9 @@ import { applyScenarioAtCompositionTime } from './scenario/applyScenarioAtCompos
 import {
   computeScenarioDurationSec,
   computeScenarioSoloPinnedChildIds,
-  orderTracksLikeLayerOrder,
   emptyScenarioTracksFromScene,
+  orderTracksLikeLayerOrder,
+  scenarioPlaceholderAttachSig,
 } from './scenario/scenarioModel'
 import type { ScenarioMarker, ScenarioTrack } from './scenario/scenarioTypes'
 import { newScenarioMarkerId } from './scenario/scenarioTypes'
@@ -344,6 +345,11 @@ function App() {
   const removeSpineDialogNoRef = useRef<HTMLButtonElement>(null)
   const [clearSceneConfirmOpen, setClearSceneConfirmOpen] = useState(false)
   const clearSceneConfirmNoRef = useRef<HTMLButtonElement>(null)
+  /** Shown on every fresh page load (empty scene) and again after Clear scene — not persisted across sessions. */
+  const [welcomeScreenOpen, setWelcomeScreenOpen] = useState(true)
+  const welcomeScreenContinueRef = useRef<HTMLButtonElement>(null)
+  /** After Clear scene, show the welcome notice again even if the user dismissed it earlier. */
+  const welcomeAfterClearRef = useRef(false)
   const [atlasPreviewRevision, setAtlasPreviewRevision] = useState(0)
   /** Session-wide atlas preview: which @tag is applied to every compatible skeleton. */
   const [atlasSessionTag, setAtlasSessionTag] = useState<null | '1x' | '2x'>(null)
@@ -715,8 +721,16 @@ function App() {
   const [scenarioLaneOrder, setScenarioLaneOrder] = useState<string[]>([])
   const scenarioLaneOrderRef = useRef<string[]>([])
   const scenarioTransportPlayingRef = useRef(false)
+  /** Driven from {@link PixiStage}'s ticker — one composition step per rendered frame (see ref prop). */
+  const scenarioCompositionTransportRef = useRef<((deltaSec: number) => void) | null>(null)
+  const scenarioTransportUiThrottleRef = useRef(0)
   /** When exiting Scenario, restore the layout tab the user had before entering. */
   const scenarioLayoutBackupRef = useRef<PlaceholderLayoutKey | null>(null)
+  /**
+   * Last {@link scenarioPlaceholderAttachSig} for which we ran full placeholder reconcile during
+   * scenario. `null` = must reconcile on next sync (seek, timeline edit, enter scenario, …).
+   */
+  const scenarioAttachReconcileSigRef = useRef<string | null>(null)
 
   const scenarioDuration = useMemo(
     () => computeScenarioDurationSec(scenarioTracks),
@@ -725,6 +739,10 @@ function App() {
   useEffect(() => {
     scenarioDurationRef.current = Math.max(0.001, scenarioDuration)
   }, [scenarioDuration])
+
+  useEffect(() => {
+    scenarioAttachReconcileSigRef.current = null
+  }, [scenarioTracks])
 
   useEffect(() => {
     if (scenarioMode) return
@@ -885,9 +903,10 @@ function App() {
     const tracks = scenarioTracksRef.current
     const layout = placeholderLayoutTargetRef.current
     applyScenarioAtCompositionTime(tracks, rows, t, scenarioGapHiddenRef.current)
+    const gap = scenarioGapHiddenRef.current
     for (const row of rows) {
       let vis = effectiveLayerVisible(row, layout)
-      if (scenarioGapHiddenRef.current.has(row.id)) vis = false
+      if (gap.has(row.id)) vis = false
       row.spine.visible = vis
       const effectivelyFrozen = row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored
       row.spine.cursor = row.locked || effectivelyFrozen ? 'default' : 'grab'
@@ -895,19 +914,20 @@ function App() {
 
     const stage = stageRef.current
     if (!stage) return
-    const want = computeScenarioSoloPinnedChildIds(rows, scenarioGapHiddenRef.current)
-    const rowsPayload = rows.map((r) => ({
-      id: r.id,
-      spine: r.spine,
-      placeholderBindings: r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored ? {} : r.placeholderBindings,
-    }))
-    // Always reconcile after applyScenario + visibility: skipping when the solo-child *set*
-    // was unchanged left nested symbols with stale world transforms (wrong positions / scale).
-    stage.reconcilePlaceholderAttachments(
-      rowsPayload,
-      layout,
-      want.size > 0 ? { scenarioSoloChildIds: want } : undefined,
-    )
+    const want = computeScenarioSoloPinnedChildIds(rows, gap)
+    const attachSig = scenarioPlaceholderAttachSig(layout, gap, want)
+    if (attachSig !== scenarioAttachReconcileSigRef.current) {
+      scenarioAttachReconcileSigRef.current = attachSig
+      stage.reconcilePlaceholderAttachments(
+        rows.map((r) => ({
+          id: r.id,
+          spine: r.spine,
+          placeholderBindings: r.placeholderPolicyFrozen && !r.placeholderPolicyIgnored ? {} : r.placeholderBindings,
+        })),
+        layout,
+        want.size > 0 ? { scenarioSoloChildIds: want } : undefined,
+      )
+    }
   }, [])
 
   const seekScenarioMarker = useCallback(
@@ -921,6 +941,7 @@ function App() {
       const clamped = Math.min(Math.max(0, t), maxT)
       scenarioTimeRef.current = clamped
       setScenarioCompTime(clamped)
+      scenarioAttachReconcileSigRef.current = null
       syncScenarioSpineWorld(clamped)
     },
     [syncScenarioSpineWorld],
@@ -1176,6 +1197,9 @@ function App() {
   )
   const atlasStemPreviewVisible = atlas1xAvailable || atlas2xAvailable
 
+  /** Grid axes / spine anchors: normal layout authoring (Main, Portrait, Landscape, Tablet) only. */
+  const showWorldGridOnStage = showWorldGrid && !isolateMode && !scenarioMode
+
   /** Toolbar highlight: match loader preference (@2x first) so @2x is active when unset. */
   useEffect(() => {
     if (atlasSessionTag != null) return
@@ -1284,13 +1308,16 @@ function App() {
     if (mainInits.length > 0) {
       const snapshot = mainInits.slice()
       queueMicrotask(() => {
-        setSpineRows((prev) =>
-          prev.map((row) => {
+        setSpineRows((prev) => {
+          let changed = false
+          const next = prev.map((row) => {
             const it = snapshot.find((m) => m.id === row.id)
             if (!it || row.pinnedBoneOffsetMain != null) return row
+            changed = true
             return { ...row, pinnedBoneOffsetMain: { x: it.x, y: it.y } }
-          }),
-        )
+          })
+          return changed ? next : prev
+        })
       })
     }
   }, [spineRows, placeholderLayoutTarget, isolateMode, isolateSpineOrder])
@@ -1302,6 +1329,7 @@ function App() {
       childRowId: string | null,
       op: 'replace' | 'add' | 'remove' = 'replace',
     ) => {
+      if (scenarioModeRef.current) scenarioAttachReconcileSigRef.current = null
       setSpineRows((prev) => applyPlaceholderBinding(prev, hostRowId, boneName, childRowId, op))
     },
     [],
@@ -1554,19 +1582,15 @@ function App() {
     setConsoleTab('validation')
   }, [spineRows.length, scenarioMode])
 
-  useEffect(() => {
-    if (!scenarioMode || !scenarioTransportPlaying) return
-    const rafRef = { id: 0 }
-    let cancelled = false
-    let last = performance.now()
-    let lastUiMs = performance.now()
-    const tick = (now: number) => {
-      if (cancelled) return
-      const dt = (now - last) / 1000
-      last = now
-      let t = scenarioTimeRef.current + dt
+  useLayoutEffect(() => {
+    if (!scenarioMode || !scenarioTransportPlaying) {
+      scenarioCompositionTransportRef.current = null
+      return
+    }
+    scenarioCompositionTransportRef.current = (dt) => {
+      if (!scenarioModeRef.current || !scenarioTransportPlayingRef.current) return
       const dur = scenarioDurationRef.current
-      let scheduleNext = true
+      let t = scenarioTimeRef.current + dt
       if (t >= dur) {
         if (scenarioLoopRef.current) {
           t = t % dur
@@ -1576,24 +1600,20 @@ function App() {
           syncScenarioSpineWorld(t)
           setScenarioCompTime(t)
           setScenarioTransportPlaying(false)
-          scheduleNext = false
+          scenarioCompositionTransportRef.current = null
+          return
         }
       }
-      if (cancelled) return
-      if (scheduleNext) {
-        scenarioTimeRef.current = t
-        syncScenarioSpineWorld(t)
-        if (now - lastUiMs >= 50) {
-          lastUiMs = now
-          setScenarioCompTime(t)
-        }
-        rafRef.id = requestAnimationFrame(tick)
+      scenarioTimeRef.current = t
+      syncScenarioSpineWorld(t)
+      const now = performance.now()
+      if (now - scenarioTransportUiThrottleRef.current >= 50) {
+        scenarioTransportUiThrottleRef.current = now
+        setScenarioCompTime(t)
       }
     }
-    rafRef.id = requestAnimationFrame(tick)
     return () => {
-      cancelled = true
-      cancelAnimationFrame(rafRef.id)
+      scenarioCompositionTransportRef.current = null
     }
   }, [scenarioMode, scenarioTransportPlaying, syncScenarioSpineWorld])
 
@@ -1602,6 +1622,7 @@ function App() {
     setScenarioTransportPlaying(false)
     setScenarioCompTime(0)
     scenarioTimeRef.current = 0
+    scenarioAttachReconcileSigRef.current = null
     scenarioLayoutBackupRef.current = placeholderLayoutTargetRef.current
     setPlaceholderLayoutTarget('main')
     setScenarioMode(true)
@@ -1623,6 +1644,7 @@ function App() {
   const disableScenarioMode = useCallback(() => {
     setScenarioMode(false)
     setScenarioTransportPlaying(false)
+    scenarioAttachReconcileSigRef.current = null
     scenarioGapHiddenRef.current.clear()
     // Keep lane order, markers, and tracks — they still serialize in .mancala and reload correctly.
     // Clearing them here made "save after turning Scenario off" drop markers from the file.
@@ -2161,10 +2183,12 @@ function App() {
   // Per-row unknown animation list whenever the common list or loaded spines change.
   useEffect(() => {
     const known = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
-    setSpineRows((prev) =>
-      prev.map((row) => {
+    setSpineRows((prev) => {
+      let changed = false
+      const next = prev.map((row) => {
         if (known.length === 0) {
           if (row.unknownAnimationNames.length === 0) return row
+          changed = true
           return { ...row, unknownAnimationNames: [] }
         }
         const { unknownNames } = validateLoadedSkeletonAnimations(
@@ -2179,9 +2203,11 @@ function App() {
         ) {
           return row
         }
+        changed = true
         return { ...row, unknownAnimationNames: unknownNames }
-      }),
-    )
+      })
+      return changed ? next : prev
+    })
   }, [commonAnimationNames])
 
   // Merge placeholder-policy + animation-name-policy issues into Bundle validation whenever
@@ -2444,7 +2470,9 @@ function App() {
       const rows = spineRowsRef.current
       const row = rows.find((r) => r.id === rowId)
       if (!row) return
-      stopIsolatePlayback()
+      if (isolateSeqRef.current.some((e) => e.spine === row.spine)) {
+        stopIsolatePlayback()
+      }
       const nextRows = spineRowsAfterRemoval(rows, rowId)
       stageRef.current?.reconcilePlaceholderAttachments(
         nextRows.map((r) => ({
@@ -2502,7 +2530,57 @@ function App() {
     return () => document.removeEventListener('keydown', onKey)
   }, [clearSceneConfirmOpen])
 
+  useEffect(() => {
+    const hasObjects = spineRows.length > 0 || spriteRows.length > 0
+    if (hasObjects) {
+      setWelcomeScreenOpen(false)
+      return
+    }
+    if (welcomeAfterClearRef.current) {
+      setWelcomeScreenOpen(true)
+      welcomeAfterClearRef.current = false
+    }
+  }, [spineRows.length, spriteRows.length])
+
+  const dismissWelcomeScreen = useCallback(() => {
+    setWelcomeScreenOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (!welcomeScreenOpen) return
+    welcomeScreenContinueRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismissWelcomeScreen()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [welcomeScreenOpen, dismissWelcomeScreen])
+
   const clearScene = useCallback(() => {
+    welcomeAfterClearRef.current = true
+    scenarioAttachReconcileSigRef.current = null
+    // Tear down playback and Spine listeners while instances are still alive — avoids retaining
+    // AnimationState / RAF work after Pixi destroy (reduces ghost heap growth after Clear scene).
+    stopIsolatePlayback()
+    setScenePlaying(false)
+    setScenarioTransportPlaying(false)
+    setIsolatePlaying(false)
+    for (const row of spineRowsRef.current) {
+      if (row.placeholderPolicyFrozen && !row.placeholderPolicyIgnored) continue
+      spineHandleById.current.get(row.id)?.pausePlayback()
+    }
+    setIsolateMode(false)
+    setIsolateSpineOrder([])
+    setIsolateAnimQueues({})
+    setIsolateAnimLabels({})
+    setIsolateAnimSpeed({})
+    isolateSeqRef.current = []
+    isolateAnimQueuesRef.current = {}
+    isolateAnimSpeedRef.current = {}
+    isolateSpineOrderRef.current = []
+    isolateBackupRef.current = null
+    pendingIsolateRestoreRef.current = null
+
     importedFilesRef.current = []
     const spritesToClear = [...spriteRowsRef.current]
     // Drop inspector / hierarchy rows from React *before* destroying Pixi spines, so effects
@@ -2534,7 +2612,7 @@ function App() {
     }
     stageRef.current?.resetStageView()
     spineHandleById.current.clear()
-  }, [])
+  }, [stopIsolatePlayback])
 
   const resetCanvasView = useCallback(() => {
     stageRef.current?.resetStageView()
@@ -3358,6 +3436,9 @@ function App() {
                         return (
                           <div
                             key={id}
+                            role="treeitem"
+                            aria-selected={isSelected}
+                            aria-grabbed={hierarchyDragId === id}
                             className={`editor-hierarchy-row${isSelected ? ' is-selected' : ''}${id === hierarchyDragId ? ' is-hierarchy-dragging' : ''}${id === hierarchyDragOverId ? ' is-hierarchy-drop-target' : ''}`}
                             onDragOver={(e) => {
                               e.preventDefault()
@@ -3406,9 +3487,6 @@ function App() {
                               type="button"
                               draggable
                               className="editor-hierarchy-main"
-                              role="treeitem"
-                              aria-selected={isSelected}
-                              aria-grabbed={hierarchyDragId === id}
                               onClick={() => selectFromHierarchy(id)}
                               onDragStart={(e) => onHierarchyDragStart(e, id)}
                               onDragEnd={onHierarchyDragEnd}
@@ -3579,11 +3657,16 @@ function App() {
                 <input
                   type="checkbox"
                   checked={showWorldGrid}
+                  disabled={isolateMode || scenarioMode}
                   onChange={(e) => setShowWorldGrid(e.target.checked)}
                 />
                 <span
                   className="editor-field-label"
-                  title="World (0,0) at viewport center after Reset view. +X right, +Y down. Cyan = skeleton root bone (Spine placement origin)."
+                  title={
+                    isolateMode || scenarioMode
+                      ? 'World grid is off during Isolate or Scenario. Turn that mode off to use the grid on Main / Portrait / Landscape / Tablet.'
+                      : 'World (0,0) at viewport center after Reset view. +X right, +Y down. Cyan = skeleton root bone (Spine placement origin).'
+                  }
                 >
                   World grid
                 </span>
@@ -3657,9 +3740,13 @@ function App() {
               <div className="editor-viewport-stage-stack">
                 <PixiStage
                   ref={stageRef}
+                  scenarioCompositionTransportRef={scenarioCompositionTransportRef}
                   backdropMode={backdropMode}
-                  showWorldGrid={showWorldGrid}
-                  onStageViewChange={setStageScale}
+                  showWorldGrid={showWorldGridOnStage}
+                  onStageViewChange={(s) => {
+                    if (typeof s !== 'number' || !Number.isFinite(s)) return
+                    setStageScale((prev) => (Math.abs(prev - s) > 1e-6 ? s : prev))
+                  }}
                   viewportLayoutTarget={placeholderLayoutTarget}
                   spineSceneRevision={spineRows.length}
                   atlasPreviewRevision={atlasPreviewRevision}
@@ -3673,6 +3760,39 @@ function App() {
                   onSpriteDragStart={onSpriteDragStartForHistory}
                   onSpriteDragEnd={onSpriteDragEndForHistory}
                 />
+                {welcomeScreenOpen ? (
+                  <div
+                    className="editor-viewport-renderer-message"
+                    role="region"
+                    aria-labelledby="editor-renderer-message-title"
+                  >
+                    <div className="editor-viewport-renderer-message-card">
+                      <h2 id="editor-renderer-message-title" className="editor-viewport-renderer-message-title">
+                        Message
+                      </h2>
+                      <p className="editor-viewport-renderer-message-body">
+                        <span className="editor-viewport-renderer-message-scenario">Scenario mode</span> is still
+                        under active development. While the composition
+                        timeline is playing, you may notice <strong>higher CPU usage</strong> and{' '}
+                        <strong>lower responsiveness</strong> than in the rest of the editor. If you do not need
+                        the timeline, turn{' '}
+                        <span className="editor-viewport-renderer-message-scenario">Scenario mode</span> off for the
+                        best experience.
+                      </p>
+                      <div className="editor-viewport-renderer-message-actions">
+                        <button
+                          ref={welcomeScreenContinueRef}
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={dismissWelcomeScreen}
+                        >
+                          Continue
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                {!welcomeScreenOpen ? (
                 <div
                   className={
                     placeholderLayoutTarget === 'main'
@@ -3687,6 +3807,7 @@ function App() {
                       : `${VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]} · composition`
                     : VIEWPORT_LAYOUT_WATERMARK[placeholderLayoutTarget]}
                 </div>
+                ) : null}
                 {/* Metrics overlay — re-enable with import + toolbar checkbox above
                 {showMetricsOverlay ? (
                   <ViewportMetricsOverlay

@@ -1,4 +1,5 @@
 import type { SpineControlRow } from '../SpineInstanceControls'
+import type { PlaceholderLayoutKey } from '../spine/placeholderLayoutResolution'
 import { pickIdleAnimationName } from '../spine/pickIdleAnimation'
 import type { ScenarioClip, ScenarioTrack } from './scenarioTypes'
 import { newScenarioClipId } from './scenarioTypes'
@@ -62,6 +63,21 @@ export function computeScenarioSoloPinnedChildIds(
     want.add(row.id)
   }
   return want
+}
+
+/**
+ * Key for whether scenario placeholder nesting (gap hosts + solo-floated children) changed.
+ * When equal across ticks, skip full `reconcilePlaceholderAttachments` — it detaches/rebuilds every
+ * attachment and was dominating CPU during timeline playback.
+ */
+export function scenarioPlaceholderAttachSig(
+  layout: PlaceholderLayoutKey,
+  gap: ReadonlySet<string>,
+  solo: ReadonlySet<string>,
+): string {
+  const g = gap.size === 0 ? '' : [...gap].sort().join('\u001e')
+  const s = solo.size === 0 ? '' : [...solo].sort().join('\u001e')
+  return `${layout}\u001f${g}\u001f${s}`
 }
 
 export function orderTracksLikeLayerOrder(

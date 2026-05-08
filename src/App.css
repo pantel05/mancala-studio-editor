@@ -23,6 +23,8 @@
   background: var(--bg-panel-header);
   border-bottom: 1px solid var(--border);
   user-select: none;
+  /* Avoid clipping focus rings / transport hit targets from overlapping columns */
+  overflow: visible;
 }
 
 .editor-titlebar-left {
@@ -50,7 +52,13 @@
 
 .editor-menu-bar-item {
   margin: 0;
-  padding: 0 12px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 6px 12px;
   border: none;
   border-radius: 2px;
   background: transparent;
@@ -59,7 +67,7 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  line-height: 1;
+  line-height: 1.2;
 }
 
 .editor-menu-bar-item:hover {
@@ -234,13 +242,18 @@
 }
 
 .editor-titlebar-center {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
+  pointer-events: auto;
 }
 
 .editor-titlebar-hints {
+  position: relative;
+  z-index: 0;
   flex-shrink: 0;
   justify-self: end;
   min-width: 0;
@@ -270,19 +283,22 @@
 .editor-transport {
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 2px 3px;
+  gap: 2px;
+  padding: 4px;
   border-radius: 3px;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
 }
 
 .transport-btn {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
   width: 28px;
-  height: 24px;
+  height: 28px;
   margin: 0;
   padding: 0;
   border: none;
@@ -580,7 +596,8 @@
   margin: 0 0 6px;
   font-size: 10px;
   line-height: 1.35;
-  color: var(--text-muted);
+  /* Slightly brighter than generic muted text for small type on sidebar */
+  color: #8f9eae;
 }
 
 .editor-hierarchy {
@@ -632,8 +649,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   margin: 0;
   padding: 0;
   border: none;
@@ -1339,6 +1358,72 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* In-viewport notice (e.g. Scenario mode expectations) — sits over the WebGL canvas, not a global modal */
+.editor-viewport-renderer-message {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 40px);
+  box-sizing: border-box;
+  pointer-events: auto;
+  background:
+    radial-gradient(ellipse 85% 65% at 50% 38%, rgba(70, 110, 180, 0.22) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 45% at 80% 75%, rgba(130, 80, 200, 0.12) 0%, transparent 50%),
+    linear-gradient(180deg, rgba(12, 14, 20, 0.88) 0%, rgba(16, 18, 26, 0.94) 100%);
+}
+
+.editor-viewport-renderer-message-card {
+  width: 100%;
+  max-width: 560px;
+  padding: clamp(28px, 5vw, 40px) clamp(24px, 4vw, 44px) clamp(24px, 4vw, 36px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(
+    165deg,
+    rgba(32, 36, 48, 0.97) 0%,
+    rgba(22, 24, 34, 0.98) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35) inset,
+    0 28px 72px rgba(0, 0, 0, 0.55),
+    0 0 48px rgba(60, 100, 180, 0.08);
+  text-align: center;
+}
+
+.editor-viewport-renderer-message-title {
+  margin: 0 0 clamp(16px, 2.5vw, 24px);
+  font-size: clamp(1.35rem, 3.2vw, 1.85rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.editor-viewport-renderer-message-body {
+  margin: 0 0 clamp(22px, 3vw, 32px);
+  font-size: clamp(0.9rem, 1.65vw, 1.05rem);
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 42em;
+  margin-inline: auto;
+}
+
+.editor-viewport-renderer-message-scenario {
+  font-weight: 800;
+  color: #5ecbff;
+  letter-spacing: -0.02em;
+}
+
+.editor-viewport-renderer-message-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
 }
 
 .editor-viewport-layout-watermark {

@@ -25,6 +25,12 @@ export function applyScenarioAtCompositionTime(
   scenarioGapHiddenIds.clear()
   const rowById = new Map(spineRows.map((r) => [r.id, r]))
 
+  // Scenario is the only time source — never leave stragglers on Spine's internal ticker (e.g. rows
+  // not listed on tracks yet, or placeholder-frozen rows that skip the loop below).
+  for (const row of spineRows) {
+    if (!row.spine.destroyed) row.spine.autoUpdate = false
+  }
+
   for (const tr of tracks) {
     const row = rowById.get(tr.spineRowId)
     if (!row || row.spine.destroyed) continue

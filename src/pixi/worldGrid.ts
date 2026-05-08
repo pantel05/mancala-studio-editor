@@ -64,6 +64,11 @@ export function visibleWorldBounds(
   }
 }
 
+/** Reused by {@link paintWorldGridSpineAnchors} to avoid per-frame `{x,y}` allocations. */
+const anchorPaintGlobal = new Point()
+const anchorPaintLocal = new Point()
+let anchorPaintFlat = new Float64Array(32)
+
 /** Skeleton instance origin in world space (works when Spine is nested under placeholders). */
 export function spineAnchorsInWorldSpace(world: Container, spines: Spine[]): { x: number; y: number }[] {
   const global = new Point()
@@ -131,14 +136,36 @@ export function paintWorldGridGeometry(
 export function paintWorldGridSpineAnchors(g: Graphics, world: Container, spines: Spine[]): void {
   g.clear()
   if (spines.length === 0) return
+  const need = spines.length * 2
+  if (anchorPaintFlat.length < need) {
+    anchorPaintFlat = new Float64Array(Math.max(need, anchorPaintFlat.length * 2))
+  }
+  const flat = anchorPaintFlat
+  const global = anchorPaintGlobal
+  const local = anchorPaintLocal
+  let pairs = 0
+  for (const spine of spines) {
+    if (spine.destroyed) continue
+    try {
+      spine.getGlobalPosition(global)
+      world.toLocal(global, undefined, local)
+      flat[pairs++] = local.x
+      flat[pairs++] = local.y
+    } catch {
+      // transform not ready yet
+    }
+  }
+  if (pairs === 0) return
   const sx = Math.max(Math.abs(world.scale.x), 1e-6)
   const arm = Math.max(12 / sx, 5)
-  const anchors = spineAnchorsInWorldSpace(world, spines)
-  for (const p of anchors) {
-    g.moveTo(p.x - arm, p.y).lineTo(p.x + arm, p.y).stroke(spineAnchorStroke)
-    g.moveTo(p.x, p.y - arm).lineTo(p.x, p.y + arm).stroke(spineAnchorStroke)
+  const n = pairs >> 1
+  for (let i = 0; i < n; i++) {
+    const px = flat[i * 2]!
+    const py = flat[i * 2 + 1]!
+    g.moveTo(px - arm, py).lineTo(px + arm, py).stroke(spineAnchorStroke)
+    g.moveTo(px, py - arm).lineTo(px, py + arm).stroke(spineAnchorStroke)
     const r = Math.max(3 / sx, 2)
-    g.circle(p.x, p.y, r).stroke(spineAnchorStroke)
+    g.circle(px, py, r).stroke(spineAnchorStroke)
   }
 }
 
