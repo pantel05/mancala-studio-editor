@@ -30,6 +30,7 @@ import {
   type ValidationIssue,
 } from './spine/validateSpineSelection'
 import { readCommonPlaceholderNames, writeCommonPlaceholderNames } from './spine/commonPlaceholdersStorage'
+import { scanSkeletonPlaceholders } from './spine/scanSkeletonPlaceholders'
 import {
   resolveInspectorPlaceholders,
   validateLoadedSkeletonPlaceholders,
@@ -1935,6 +1936,7 @@ function App() {
       setOutcome({ ...feedback, notes: [...skipNote, ...feedback.notes] })
       if (newInstances.length > 0) {
         setAtlasSessionTag(null)
+        const allowed = commonPlaceholderNames.map((t) => t.trim()).filter(Boolean)
         const knownAnims = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
         const knownSet = new Set(knownAnims)
         const animIssues: ValidationIssue[] = []
@@ -1979,10 +1981,27 @@ function App() {
         if (promptEntries.length > 0) {
           setPendingUnknownAnims(promptEntries)
         }
-        // Placeholder prompt: show when frozen instances have unknown placeholder bones
-        const phPromptEntries: UnknownAnimEntry[] = newInstances
-          .filter((inst) => inst.placeholderPolicyFrozen && (inst.unknownPlaceholderNames?.length ?? 0) > 0)
-          .map((inst) => ({ displayName: inst.displayName, names: inst.unknownPlaceholderNames! }))
+        // Placeholder prompt: frozen + mismatched names when the bible is non-empty; when empty,
+        // same pattern as animations — offer to seed Common placeholders from convention-detected bones.
+        const phPromptEntries: UnknownAnimEntry[] = []
+        if (allowed.length > 0) {
+          for (const inst of newInstances) {
+            if (!inst.placeholderPolicyFrozen || !(inst.unknownPlaceholderNames?.length ?? 0)) continue
+            phPromptEntries.push({
+              displayName: inst.displayName,
+              names: inst.unknownPlaceholderNames!,
+            })
+          }
+        } else {
+          for (const inst of newInstances) {
+            const names = [
+              ...new Set(scanSkeletonPlaceholders(inst.spine).map((p) => p.boneName)),
+            ].sort((a, b) => a.localeCompare(b))
+            if (names.length > 0) {
+              phPromptEntries.push({ displayName: inst.displayName, names })
+            }
+          }
+        }
         if (phPromptEntries.length > 0) {
           setPendingUnknownPlaceholders(phPromptEntries)
         }
@@ -2169,14 +2188,23 @@ function App() {
   // spines or common lists change. Fixes project reopen where report existed but policy lines were missing,
   // and covers prev===null in older animation-only logic.
   useEffect(() => {
-    if (spineRows.length === 0) return
+    if (spineRows.length === 0) {
+      setValidationReport((prev) => {
+        if (!prev) return prev
+        const nextIssues = prev.issues.filter(
+          (i) =>
+            i.issueKind !== 'placeholder-policy' && i.issueKind !== 'animation-name-policy',
+        )
+        if (nextIssues.length === prev.issues.length) return prev
+        return { ...prev, issues: nextIssues }
+      })
+      return
+    }
     const allowed = commonPlaceholderNames.map((t) => t.trim()).filter(Boolean)
     const known = commonAnimationNames.map((t) => t.trim()).filter(Boolean)
     const policyIssues: ValidationIssue[] = []
     for (const row of spineRows) {
-      if (allowed.length > 0) {
-        policyIssues.push(...validateLoadedSkeletonPlaceholders(row.displayName, row.spine, allowed))
-      }
+      policyIssues.push(...validateLoadedSkeletonPlaceholders(row.displayName, row.spine, allowed))
       if (known.length > 0) {
         policyIssues.push(...validateLoadedSkeletonAnimations(row.displayName, row.spine, known).issues)
       }
@@ -2298,12 +2326,9 @@ function App() {
             continue
           }
 
-          const phIssues =
-            allowed.length > 0
-              ? validateLoadedSkeletonPlaceholders(row.displayName, res.spine, allowed)
-              : []
+          const phIssues = validateLoadedSkeletonPlaceholders(row.displayName, res.spine, allowed)
           let placeholderPolicyFrozen = false
-          if (phIssues.length > 0) {
+          if (phIssues.some((i) => i.severity === 'error')) {
             placeholderPolicyFrozen = true
             res.spine.autoUpdate = false
             res.spine.state.timeScale = 0
@@ -2698,14 +2723,28 @@ function App() {
     }
 
     const phPromptEntries: UnknownAnimEntry[] = []
-    for (const inst of newInstances) {
-      if (!inst.placeholderPolicyFrozen || !(inst.unknownPlaceholderNames?.length)) continue
-      const savedObj = project.objects.find((o) => o.displayName === inst.displayName)
-      if (savedObj?.placeholderPolicyIgnored) continue
-      phPromptEntries.push({
-        displayName: inst.displayName,
-        names: inst.unknownPlaceholderNames!,
-      })
+    const allowedPh = commonPlaceholderNames.map((t) => t.trim()).filter(Boolean)
+    if (allowedPh.length > 0) {
+      for (const inst of newInstances) {
+        if (!inst.placeholderPolicyFrozen || !(inst.unknownPlaceholderNames?.length)) continue
+        const savedObj = project.objects.find((o) => o.displayName === inst.displayName)
+        if (savedObj?.placeholderPolicyIgnored) continue
+        phPromptEntries.push({
+          displayName: inst.displayName,
+          names: inst.unknownPlaceholderNames!,
+        })
+      }
+    } else {
+      for (const inst of newInstances) {
+        const savedObj = project.objects.find((o) => o.displayName === inst.displayName)
+        if (savedObj?.placeholderPolicyIgnored) continue
+        const names = [
+          ...new Set(scanSkeletonPlaceholders(inst.spine).map((p) => p.boneName)),
+        ].sort((a, b) => a.localeCompare(b))
+        if (names.length > 0) {
+          phPromptEntries.push({ displayName: inst.displayName, names })
+        }
+      }
     }
     if (phPromptEntries.length > 0) {
       setPendingUnknownPlaceholders(phPromptEntries)
@@ -3924,15 +3963,27 @@ function App() {
         entries={pendingUnknownPlaceholders ?? []}
         onConfirm={onConfirmUnknownPlaceholders}
         onDismiss={onDismissUnknownPlaceholders}
-        title="Unknown placeholder bones detected"
+        title={
+          commonPlaceholderNames.some((s) => s.trim())
+            ? 'Unknown placeholder bones detected'
+            : 'Placeholder bones detected'
+        }
         description={
-          <>
-            The following placeholder bones were found that are <strong>not</strong> in your{' '}
-            <strong>Common Placeholders</strong> list. The affected{' '}
-            {(pendingUnknownPlaceholders?.length ?? 0) === 1 ? 'object is' : 'objects are'} currently{' '}
-            <strong>frozen</strong>. Add the correct names to unfreeze, or dismiss to keep them
-            frozen and fix via <em>Settings → Common placeholders</em>.
-          </>
+          commonPlaceholderNames.some((s) => s.trim()) ? (
+            <>
+              The following placeholder bones were found that are <strong>not</strong> in your{' '}
+              <strong>Common Placeholders</strong> list. The affected{' '}
+              {(pendingUnknownPlaceholders?.length ?? 0) === 1 ? 'object is' : 'objects are'} currently{' '}
+              <strong>frozen</strong>. Add the correct names to unfreeze, or dismiss to keep them
+              frozen and fix via <em>Settings → Common placeholders</em>.
+            </>
+          ) : (
+            <>
+              The following bones match the editor&apos;s placeholder naming convention while your{' '}
+              <strong>Common Placeholders</strong> list is still empty. Add the ones you want as your
+              standard, or dismiss and fill the list later under <em>Settings → Common placeholders</em>.
+            </>
+          )
         }
         listLabel="Common Placeholders"
       />

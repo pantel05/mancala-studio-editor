@@ -1221,26 +1221,25 @@ export const PixiStage = forwardRef<PixiStageHandle, PixiStageProps>(function Pi
           result.spine.zIndex = 0
           let placeholderPolicyFrozen = false
           let unknownPlaceholderNames: string[] = []
-          if (allowed.length > 0) {
-            const allowedSet = new Set(allowed)
-            const phIssues = validateLoadedSkeletonPlaceholders(
-              result.displayName,
-              result.spine,
-              allowed,
+          const phIssues = validateLoadedSkeletonPlaceholders(
+            result.displayName,
+            result.spine,
+            allowed,
+          )
+          loadValidationIssues.push(...phIssues)
+          const hasPlaceholderErrors = phIssues.some((i) => i.severity === 'error')
+          if (hasPlaceholderErrors) {
+            placeholderPolicyFrozen = true
+            result.spine.autoUpdate = false
+            result.spine.state.timeScale = 0
+            result.spine.update(0)
+            loadNotesExtra.push(
+              `${result.displayName}: loaded frozen (placeholder names) — see Bundle validation until fixed.`,
             )
-            if (phIssues.length > 0) {
-              loadValidationIssues.push(...phIssues)
-              placeholderPolicyFrozen = true
-              result.spine.autoUpdate = false
-              result.spine.state.timeScale = 0
-              result.spine.update(0)
-              loadNotesExtra.push(
-                `${result.displayName}: loaded frozen (placeholder names) — see Bundle validation until fixed.`,
-              )
-              unknownPlaceholderNames = result.spine.skeleton.data.bones
-                .map((bd) => bd.name)
-                .filter((n) => !allowedSet.has(n) && isPlaceholderBoneName(n))
-            }
+            const allowedSet = new Set(allowed)
+            unknownPlaceholderNames = result.spine.skeleton.data.bones
+              .map((bd) => bd.name)
+              .filter((n) => !allowedSet.has(n) && isPlaceholderBoneName(n))
           }
           world.addChild(result.spine)
           attachSpineDrag(result.spine, application, world, {

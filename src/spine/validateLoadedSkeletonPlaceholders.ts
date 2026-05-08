@@ -48,6 +48,9 @@ function closestAllowedName(bone: string, allowed: readonly string[]): string | 
 }
 
 /**
+ * When the allowed list is empty: no enforcement, but if the skeleton has bones that match the
+ * placeholder naming convention, emit an informational issue so Bundle validation still surfaces them.
+ *
  * When the allowed list is non-empty, only those bone names may appear as placeholders.
  * Bones that match the loose “placeholder-like” heuristic but are not allowed → error.
  * Bones that are close (edit distance) to an allowed name but not exact → error (typos).
@@ -58,7 +61,22 @@ export function validateLoadedSkeletonPlaceholders(
   allowedBoneNames: string[],
 ): ValidationIssue[] {
   const allowed = [...new Set(allowedBoneNames.map((s) => s.trim()).filter(Boolean))]
-  if (allowed.length === 0) return []
+  if (allowed.length === 0) {
+    const scanned = scanSkeletonPlaceholders(spine)
+    if (scanned.length === 0) return []
+    const names = [...new Set(scanned.map((p) => p.boneName))].sort((a, b) =>
+      a.localeCompare(b),
+    )
+    const list = names.map((n) => `“${n}”`).join(', ')
+    return [
+      {
+        issueKind: 'placeholder-policy',
+        severity: 'info',
+        message: `Found ${names.length} convention-based placeholder bone(s): ${list}. Your Common placeholders list is empty — add these under Settings → Common placeholders when you want bundle checks against your standard list.`,
+        context: displayName,
+      },
+    ]
+  }
 
   const allowedSet = new Set(allowed)
   const issues: ValidationIssue[] = []
